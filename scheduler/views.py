@@ -4,6 +4,8 @@ import subprocess
 from django.conf import settings
 from django.shortcuts import render
 
+from .timetable_service import build_sessions, build_timetable_rows, run_graph_coloring
+
 
 def home(request):
     """
@@ -37,4 +39,48 @@ def home(request):
     return render(request, "scheduler/home.html", {
         "cpp_status": cpp_status,
         "cpp_message": cpp_message,
+    })
+
+
+def generate_timetable(request):
+    """
+    Stage 4: the real pipeline.
+
+        Subjects/Teachers/Divisions in the database
+            --> build_sessions()        (Python)
+            --> run_graph_coloring()    (Python writes a file, C++ engine runs)
+            --> build_timetable_rows()  (Python maps colors back to real TimeSlots)
+            --> rendered as a table
+
+    Kept as three separate function calls (not inlined) on purpose: if the
+    page ever shows a wrong answer, you can reproduce and check each step
+    by itself in `python manage.py shell`, e.g.:
+
+        from scheduler.timetable_service import build_sessions
+        sessions, warnings = build_sessions()
+        print(sessions)
+    """
+    sessions, warnings = build_sessions()
+
+    try:
+        colors, num_colors_used = run_graph_coloring(sessions)
+    except RuntimeError as exc:
+        warnings.append(str(exc))
+        colors, num_colors_used = [], 0
+
+    rows, slot_shortage = build_timetable_rows(sessions, colors)
+
+    if slot_shortage:
+        warnings.append(
+            f"The algorithm needed {num_colors_used} distinct time slots, but "
+            f"fewer than that exist in the database. Add more Time Slots in "
+            f"the admin panel. Rows below with a blank time slot could not "
+            f"be placed."
+        )
+
+    return render(request, "scheduler/timetable.html", {
+        "rows": rows,
+        "warnings": warnings,
+        "num_sessions": len(sessions),
+        "num_colors_used": num_colors_used,
     })
