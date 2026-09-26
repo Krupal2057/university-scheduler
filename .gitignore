@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+env/
+
+# Django
+db.sqlite3
+*.log
+
+# C++ build output
+cpp_engine/engine
+cpp_engine/*.o
+
+# OS/editor junk
+.DS_Store
+.vscode/
+.idea/
