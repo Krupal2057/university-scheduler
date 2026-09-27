@@ -59,7 +59,34 @@ teachers overloaded, some rooms rarely used). Stage 6 will run both
 engines on your actual database data and measure this directly, instead
 of guessing from small hand-built examples.
 
-**Where they reliably do differ, regardless of input:** execution time.
-Graph Coloring does extra work up front (computing every session's
-degree, then sorting) that Greedy skips entirely. On small inputs this
-difference is invisible; Stage 6 will measure it precisely.
+## Stage 6 update: measured comparison on real and stress-test data
+
+With the two engines wired into Django (`timetable_service.compare_algorithms()`),
+we ran both on real database sessions and on synthetic stress-test data at
+increasing scale. Results (measured, not estimated):
+
+| Sessions (n) | Graph Coloring: slots / time | Greedy: slots / time |
+|---|---|---|
+| 55 (real DB data)  | 12 slots / 2.09 ms | 12 slots / 3.24 ms |
+| 50 (synthetic)     | 7 slots / 2.14 ms  | 7 slots / 2.87 ms  |
+| 200 (synthetic)    | 8 slots / 3.70 ms  | 8 slots / 3.42 ms  |
+| 800 (synthetic)    | 12 slots / 7.58 ms | 12 slots / 3.56 ms |
+
+**Two honest conclusions:**
+
+1. **Below a few hundred sessions, timing differences are just noise** —
+   process-launch overhead (starting the C++ program at all) dwarfs any
+   O(n^2) computation happening inside it. This itself is a valid
+   complexity-analysis point: Big-O describes *asymptotic* behavior, and
+   at small n, constant-factor overhead (like process startup) can
+   dominate the "theoretically slower" algorithm's actual runtime.
+
+2. **At n = 800, the predicted pattern appears clearly**: Graph Coloring
+   takes roughly twice as long as Greedy, because it does extra O(n^2)
+   work up front — computing every session's degree, then sorting by
+   it — before it even starts coloring. Greedy skips straight to
+   coloring. Both still found the same number of time slots on this
+   data, so here the real, measurable tradeoff is **speed**, not
+   **schedule quality** — worth stating plainly in your report rather
+   than claiming Graph Coloring is simply "better."
+

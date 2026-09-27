@@ -4,7 +4,7 @@ import subprocess
 from django.conf import settings
 from django.shortcuts import render
 
-from .timetable_service import build_sessions, build_timetable_rows, run_graph_coloring
+from .timetable_service import build_sessions, build_timetable_rows, compare_algorithms, run_graph_coloring
 
 
 def home(request):
@@ -83,4 +83,21 @@ def generate_timetable(request):
         "warnings": warnings,
         "num_sessions": len(sessions),
         "num_colors_used": num_colors_used,
+    })
+
+
+def compare_view(request):
+    """
+    Stage 6: run every algorithm in timetable_service.ENGINES on the SAME
+    real database sessions, and show the measured results side by side.
+
+    Nothing here is a hardcoded/assumed number - every value in the table
+    comes from actually running the compiled C++ engines on your data
+    (see compare_algorithms() and its docstring for exactly how).
+    """
+    results, warnings = compare_algorithms()
+
+    return render(request, "scheduler/compare.html", {
+        "results": results,
+        "warnings": warnings,
     })

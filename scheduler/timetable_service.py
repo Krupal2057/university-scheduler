@@ -1,15 +1,19 @@
 """
 scheduler/timetable_service.py
 
-Stage 4: connects the real database to the Graph Coloring C++ engine.
+Stage 4: connects the real database to the C++ engines.
+Stage 6: adds Greedy as a second engine, plus timing and an independent
+conflict verifier, so the two algorithms can be honestly compared.
 
-This file deliberately does ONE job end-to-end, in three clearly separate
-steps, so that if something goes wrong you know exactly which step to
-check:
+This file deliberately does its job in clearly separate steps, so that if
+something goes wrong you know exactly which step to check:
 
   1. build_sessions()        Database rows  -> list of session dicts
-  2. run_graph_coloring()    session dicts  -> C++ engine -> color per session
-  3. build_timetable_rows()  colors         -> real TimeSlot objects, for display
+  2. run_engine()             session dicts  -> a named C++ engine -> colors + timing
+  3. count_conflicts()        colors         -> independent check: any violations?
+  4. build_timetable_rows()   colors         -> real TimeSlot objects, for display
+  5. compare_algorithms()     runs both engines on the SAME sessions, for Stage 6's
+                              comparison page
 
 Each step's output is plain Python data (lists/dicts), so you can test any
 step on its own in the Django shell without running the whole pipeline.
@@ -18,12 +22,24 @@ step on its own in the Django shell without running the whole pipeline.
 import os
 import subprocess
 import tempfile
+import time
 
 from django.conf import settings
 
 from .models import Subject, TimeSlot
 
-ENGINE_PATH = os.path.join(settings.BASE_DIR, "cpp_engine", "graph_coloring_engine")
+CPP_ENGINE_DIR = os.path.join(settings.BASE_DIR, "cpp_engine")
+
+# Every engine here reads the exact same input format (see graph_coloring.cpp
+# and greedy.cpp) and writes the exact same output format, which is what
+# makes an apples-to-apples comparison possible.
+ENGINES = {
+    "Graph Coloring": os.path.join(CPP_ENGINE_DIR, "graph_coloring_engine"),
+    "Greedy": os.path.join(CPP_ENGINE_DIR, "greedy_engine"),
+}
+
+# Kept for backward compatibility with Stage 4's generate_timetable view.
+ENGINE_PATH = ENGINES["Graph Coloring"]
 
 
 def build_sessions():
@@ -55,22 +71,24 @@ def build_sessions():
     return sessions, warnings
 
 
-def run_graph_coloring(sessions):
+def run_engine(engine_path, sessions):
     """
-    Write `sessions` to a temp file in the engine's input format, run the
-    compiled C++ engine on it, and parse its output.
+    Write `sessions` to a temp file in the shared input format, run the
+    given compiled C++ engine on it, and parse its output. Used for BOTH
+    Graph Coloring and Greedy - they are interchangeable at this level.
 
     Returns:
         colors: list of ints, colors[i] = time slot color assigned to
                 sessions[i]. Same length and order as `sessions`.
         num_colors_used: total distinct time slots the engine needed.
+        elapsed_ms: wall-clock time for the subprocess call itself, in
+                    milliseconds. This is a genuine measurement, not an
+                    estimate - it times only the engine's own run, not
+                    Python's file writing/reading around it.
     """
     if not sessions:
-        return [], 0
+        return [], 0, 0.0
 
-    # --- Step A: write the input file, exactly matching graph_coloring.cpp's
-    # expected format: first line = count, then one "teacher_id division_id"
-    # line per session, in the same order as the `sessions` list.
     with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
         f.write(f"{len(sessions)}\n")
         for s in sessions:
@@ -78,29 +96,80 @@ def run_graph_coloring(sessions):
         input_path = f.name
 
     try:
-        # --- Step B: run the compiled engine as a subprocess.
+        start = time.perf_counter()
         result = subprocess.run(
-            [ENGINE_PATH, input_path],
+            [engine_path, input_path],
             capture_output=True,
             text=True,
             timeout=10,
         )
+        elapsed_ms = (time.perf_counter() - start) * 1000
     finally:
-        os.remove(input_path)  # clean up the temp file either way
+        os.remove(input_path)
 
     if result.returncode != 0:
-        raise RuntimeError(f"graph_coloring_engine failed: {result.stderr.strip()}")
+        raise RuntimeError(f"{engine_path} failed: {result.stderr.strip()}")
 
-    # --- Step C: parse "session_id assigned_slot" lines from stdout.
     colors = [None] * len(sessions)
     for line in result.stdout.strip().splitlines():
         session_id_str, color_str = line.split()
         colors[int(session_id_str)] = int(color_str)
 
-    # The engine also prints "Total time slots used: N" to stderr.
     num_colors_used = max(colors) + 1 if colors else 0
 
+    return colors, num_colors_used, elapsed_ms
+
+
+def run_graph_coloring(sessions):
+    """Stage 4 compatibility wrapper: Graph Coloring only, no timing returned."""
+    colors, num_colors_used, _elapsed_ms = run_engine(ENGINES["Graph Coloring"], sessions)
     return colors, num_colors_used
+
+
+def count_conflicts(sessions, colors):
+    """
+    Independent verification, deliberately re-implemented from scratch
+    rather than reusing engine logic: scan every PAIR of sessions and
+    count how many conflicting pairs (same teacher or same division)
+    were still given the same color. A correct algorithm must always
+    return 0 here - this function does not trust the engines, it checks
+    them.
+    """
+    n = len(sessions)
+    violations = 0
+    for i in range(n):
+        for j in range(i + 1, n):
+            same_teacher = sessions[i]["teacher"].id == sessions[j]["teacher"].id
+            same_division = sessions[i]["subject"].division_id == sessions[j]["subject"].division_id
+            if (same_teacher or same_division) and colors[i] == colors[j]:
+                violations += 1
+    return violations
+
+
+def compare_algorithms():
+    """
+    Stage 6: run every engine in ENGINES on the SAME real session data,
+    and return measured (not made-up) results for each.
+
+    Returns:
+        list of dicts: {name, num_slots_used, elapsed_ms, conflicts, num_sessions}
+        warnings: from build_sessions()
+    """
+    sessions, warnings = build_sessions()
+    results = []
+
+    for name, engine_path in ENGINES.items():
+        colors, num_colors_used, elapsed_ms = run_engine(engine_path, sessions)
+        conflicts = count_conflicts(sessions, colors)
+        results.append({
+            "name": name,
+            "num_sessions": len(sessions),
+            "num_slots_used": num_colors_used,
+            "elapsed_ms": round(elapsed_ms, 4),
+            "conflicts": conflicts,
+        })
+
+    return results, warnings
 
 
 def build_timetable_rows(sessions, colors):
