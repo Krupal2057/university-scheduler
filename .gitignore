@@ -11,6 +11,7 @@ db.sqlite3
 # C++ build output
 cpp_engine/engine
 cpp_engine/graph_coloring_engine
+cpp_engine/greedy_engine
 cpp_engine/*.o
 
 # OS/editor junk
