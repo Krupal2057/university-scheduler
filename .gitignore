@@ -12,6 +12,7 @@ db.sqlite3
 cpp_engine/engine
 cpp_engine/graph_coloring_engine
 cpp_engine/greedy_engine
+cpp_engine/backtracking_engine
 cpp_engine/*.o
 
 # OS/editor junk
