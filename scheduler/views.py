@@ -4,7 +4,15 @@ import subprocess
 from django.conf import settings
 from django.shortcuts import render
 
-from .timetable_service import build_sessions, build_timetable_rows, compare_algorithms, run_graph_coloring
+from .models import Subject
+from .substitution_service import suggest_teacher_substitutes
+from .timetable_service import (
+    build_sessions,
+    build_timetable_rows,
+    compare_algorithms,
+    diagnose_schedulability,
+    run_graph_coloring,
+)
 
 
 def home(request):
@@ -100,4 +108,33 @@ def compare_view(request):
     return render(request, "scheduler/compare.html", {
         "results": results,
         "warnings": warnings,
+    })
+
+
+def diagnose_view(request):
+    """
+    Stage 8: "why did/would scheduling fail?" - see
+    timetable_service.diagnose_schedulability() for the full explanation
+    of the two-step approach (fast exact check, then time-limited search).
+    """
+    diagnosis = diagnose_schedulability()
+    return render(request, "scheduler/diagnose.html", diagnosis)
+
+
+def substitute_view(request):
+    """
+    Stage 9: pick any Subject, see who else could teach it if the
+    currently assigned teacher became unavailable, and why.
+    """
+    all_subjects = Subject.objects.select_related("division").order_by("division__name", "code")
+
+    subject_id = request.GET.get("subject_id")
+    result = None
+    if subject_id:
+        result = suggest_teacher_substitutes(subject_id)
+
+    return render(request, "scheduler/substitute.html", {
+        "all_subjects": all_subjects,
+        "selected_subject_id": subject_id,
+        "result": result,
     })

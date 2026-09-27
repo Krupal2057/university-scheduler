@@ -46,6 +46,11 @@ class Teacher(models.Model):
         default=18,
         help_text="Workload cap, used as a constraint by the scheduler.",
     )
+    is_available = models.BooleanField(
+        default=True,
+        help_text="Uncheck to mark this teacher temporarily unavailable (e.g. on leave). "
+                   "The scheduler will automatically look for a qualified substitute.",
+    )
 
     def __str__(self):
         return self.name

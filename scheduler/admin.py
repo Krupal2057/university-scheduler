@@ -16,7 +16,8 @@ class RoomAdmin(admin.ModelAdmin):
 
 @admin.register(Teacher)
 class TeacherAdmin(admin.ModelAdmin):
-    list_display = ("name", "email", "max_hours_per_week")
+    list_display = ("name", "email", "max_hours_per_week", "is_available")
+    list_filter = ("is_available",)
 
 
 @admin.register(Subject)

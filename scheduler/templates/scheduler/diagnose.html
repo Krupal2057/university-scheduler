@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Schedulability Diagnosis</title>
+    <link
+        href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+        rel="stylesheet">
+</head>
+<body>
+    <div class="container py-5">
+        <a href="{% url 'home' %}">&larr; Back</a>
+        <h1 class="mt-2 mb-3">Why Would Scheduling Fail?</h1>
+        <p class="text-muted">
+            {{ num_sessions }} session(s) required, {{ num_slots }} time slot(s) available.
+        </p>
+
+        {% if warnings %}
+        <div class="alert alert-warning">
+            <strong>Notes:</strong>
+            <ul class="mb-0">
+                {% for w in warnings %}<li>{{ w }}</li>{% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+
+        {% if bottlenecks %}
+        <div class="alert alert-danger">
+            <strong>Scheduling is impossible, proven instantly (no search needed):</strong>
+            <ul class="mb-0">
+                {% for b in bottlenecks %}<li>{{ b }}</li>{% endfor %}
+            </ul>
+        </div>
+
+        {% elif backtracking_outcome == "FEASIBLE" %}
+        <div class="alert alert-success">
+            <strong>A valid schedule exists.</strong>
+            The fast check found no obvious bottleneck, and Backtracking then
+            confirmed a valid assignment using only {{ num_slots }} time slot(s)
+            actually exists ({{ backtracking_calls }} recursive calls to find it).
+        </div>
+
+        {% elif backtracking_outcome == "INFEASIBLE" %}
+        <div class="alert alert-danger">
+            <strong>Scheduling is impossible.</strong>
+            No single teacher or division is overloaded on its own, but no
+            combination of assignments fits every session into
+            {{ num_slots }} time slot(s) without a conflict. Backtracking
+            proved this by exhausting every possibility
+            ({{ backtracking_calls }} recursive calls). Try adding at least
+            one more Time Slot and checking again.
+        </div>
+
+        {% elif backtracking_outcome == "TIMED_OUT" %}
+        <div class="alert alert-warning">
+            <strong>Could not determine a definitive answer in time.</strong>
+            No single teacher or division is overloaded on its own, but
+            checking every possible combination did not finish within the
+            time limit. As Stage 7 measured, Backtracking's search time can
+            explode when the true answer sits right at the edge of what's
+            possible. This is not a bug - it's the real, measured cost of
+            exact search. The safest next step is to look at the Generate
+            Timetable page: Graph Coloring will still give you a good
+            working schedule, it just won't guarantee it's using the fewest
+            possible slots.
+        </div>
+
+        {% else %}
+        <p>No sessions to check yet. Add Divisions, Subjects (with a qualified teacher), and Time Slots in the <a href="/admin/">admin panel</a> first.</p>
+        {% endif %}
+
+        <div class="card mt-3">
+            <div class="card-body">
+                <h5 class="card-title">How this check works</h5>
+                <ol class="mb-0">
+                    <li><strong>Fast, exact check first:</strong> any single teacher or division alone requiring more sessions than there are time slots makes scheduling instantly, provably impossible - no search needed.</li>
+                    <li><strong>Backtracking, time-limited, only if needed:</strong> if the fast check passes, we ask Backtracking for a real yes/no answer, but never let it run longer than 5 seconds unbounded (see <code>cpp_engine/BACKTRACKING.md</code> for why that limit exists).</li>
+                </ol>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
