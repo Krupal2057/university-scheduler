@@ -2,62 +2,371 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Generated Timetable</title>
-    <link
-        href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
-        rel="stylesheet">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Generated Timetable — University Scheduler</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0f1117;
+            --surface: #1a1d2e;
+            --surface2: #22263a;
+            --border: #2e3250;
+            --accent: #7c6fcd;
+            --accent2: #5a78f0;
+            --text: #e2e4f0;
+            --muted: #7b7f9e;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+        }
+        * { box-sizing: border-box; }
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Inter', sans-serif;
+            min-height: 100vh;
+        }
+        .top-bar {
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            padding: 14px 28px;
+            display: flex;
+            align-items: center;
+            gap: 18px;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .top-bar .back-link {
+            color: var(--muted);
+            text-decoration: none;
+            font-size: .85rem;
+            transition: color .2s;
+        }
+        .top-bar .back-link:hover { color: var(--text); }
+        .top-bar h1 {
+            font-size: 1.25rem;
+            font-weight: 700;
+            margin: 0;
+            background: linear-gradient(135deg, #a78bf6, #5a78f0);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .badge-stat {
+            margin-left: auto;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 5px 14px;
+            font-size: .8rem;
+            color: var(--muted);
+        }
+        .badge-stat strong { color: var(--accent); }
+        .main { padding: 28px; max-width: 1600px; margin: 0 auto; }
+        .alert-warn {
+            background: rgba(245,158,11,.1);
+            border: 1px solid rgba(245,158,11,.35);
+            border-radius: 10px;
+            padding: 14px 18px;
+            margin-bottom: 22px;
+            color: #fcd34d;
+            font-size: .875rem;
+        }
+        .alert-warn strong { color: var(--warning); }
+        .alert-warn ul { margin: 6px 0 0 0; padding-left: 18px; }
+        .alert-warn li { margin-top: 4px; }
+        .view-tabs {
+            display: flex;
+            gap: 6px;
+            margin-bottom: 28px;
+            border-bottom: 2px solid var(--border);
+        }
+        .view-tab {
+            padding: 9px 20px;
+            border: none;
+            background: transparent;
+            color: var(--muted);
+            font-family: inherit;
+            font-size: .875rem;
+            font-weight: 500;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+            border-radius: 6px 6px 0 0;
+            transition: color .2s, border-color .2s;
+        }
+        .view-tab:hover { color: var(--text); }
+        .view-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+        .view-pane { display: none; }
+        .view-pane.active { display: block; }
+        .division-block {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 22px;
+            margin-bottom: 36px;
+            overflow-x: auto;
+        }
+        .division-heading {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .division-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 42px;
+            height: 42px;
+            border-radius: 10px;
+            background: linear-gradient(135deg, var(--accent), var(--accent2));
+            font-weight: 700;
+            font-size: 1rem;
+            color: #fff;
+            flex-shrink: 0;
+        }
+        .division-name { font-size: 1.15rem; font-weight: 700; }
+        .tt-table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+            font-size: .82rem;
+            min-width: 500px;
+        }
+        .tt-table th, .tt-table td {
+            padding: 10px 12px;
+            text-align: center;
+            vertical-align: middle;
+            border-bottom: 1px solid var(--border);
+            border-right: 1px solid var(--border);
+        }
+        .tt-table thead th {
+            background: var(--surface2);
+            color: var(--muted);
+            font-weight: 600;
+            font-size: .78rem;
+            letter-spacing: .04em;
+            text-transform: uppercase;
+            border-top: 1px solid var(--border);
+        }
+        .tt-table thead th:first-child { border-left: 1px solid var(--border); border-radius: 10px 0 0 0; }
+        .tt-table thead th:last-child  { border-radius: 0 10px 0 0; }
+        .tt-table td.time-cell {
+            background: var(--surface2);
+            color: var(--accent);
+            font-weight: 600;
+            font-size: .78rem;
+            white-space: nowrap;
+            text-align: left;
+            border-left: 1px solid var(--border);
+            min-width: 120px;
+        }
+        .tt-table tr:last-child td { border-bottom: 1px solid var(--border); }
+        .tt-table tr:last-child td.time-cell { border-radius: 0 0 0 10px; }
+        .tt-table tr:last-child td:last-child { border-radius: 0 0 10px 0; }
+        .session-cell {
+            background: rgba(124,111,205,.12);
+            border-radius: 8px;
+            padding: 8px 10px;
+            border: 1px solid rgba(124,111,205,.3);
+            text-align: left;
+        }
+        .session-cell .subj-code { font-weight: 700; color: #a78bf6; font-size: .76rem; margin-bottom: 2px; }
+        .session-cell .subj-name  { color: var(--text); font-weight: 500; font-size: .8rem; line-height: 1.3; margin-bottom: 4px; }
+        .session-cell .teacher-name { color: var(--muted); font-size: .72rem; }
+        .empty-cell { color: var(--border); font-size: .75rem; opacity: .5; }
+        .card-surface {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 22px;
+            overflow-x: auto;
+        }
+        .list-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: .85rem; }
+        .list-table th {
+            background: var(--surface2);
+            color: var(--muted);
+            font-size: .78rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: .04em;
+            padding: 10px 16px;
+            border-top: 1px solid var(--border);
+            border-bottom: 1px solid var(--border);
+            border-right: 1px solid var(--border);
+        }
+        .list-table th:first-child { border-left: 1px solid var(--border); border-radius: 10px 0 0 0; }
+        .list-table th:last-child  { border-radius: 0 10px 0 0; }
+        .list-table td {
+            padding: 11px 16px;
+            border-bottom: 1px solid var(--border);
+            border-right: 1px solid var(--border);
+            vertical-align: middle;
+        }
+        .list-table td:first-child { border-left: 1px solid var(--border); }
+        .list-table tr:last-child td:first-child { border-radius: 0 0 0 10px; }
+        .list-table tr:last-child td:last-child   { border-radius: 0 0 10px 0; }
+        .list-table tbody tr:hover { background: rgba(255,255,255,.02); }
+        .div-tag {
+            display: inline-block;
+            padding: 3px 10px;
+            background: rgba(124,111,205,.18);
+            border: 1px solid rgba(124,111,205,.4);
+            border-radius: 20px;
+            font-size: .75rem;
+            font-weight: 600;
+            color: #a78bf6;
+        }
+        .slot-tag {
+            display: inline-block;
+            padding: 3px 10px;
+            background: rgba(90,120,240,.15);
+            border: 1px solid rgba(90,120,240,.35);
+            border-radius: 20px;
+            font-size: .75rem;
+            font-weight: 600;
+            color: #7ea3ff;
+        }
+        .no-slot { color: var(--danger); font-size: .8rem; }
+        .empty-state { text-align: center; padding: 60px 20px; color: var(--muted); }
+    </style>
 </head>
 <body>
-    <div class="container py-5">
-        <a href="{% url 'home' %}">&larr; Back</a>
-        <h1 class="mt-2 mb-3">Generated Timetable</h1>
 
-        <p class="text-muted">
-            {{ num_sessions }} session(s) scheduled using {{ num_colors_used }} distinct time slot(s)
-            (Graph Coloring algorithm).
-        </p>
-
-        {% if warnings %}
-        <div class="alert alert-warning">
-            <strong>Notes:</strong>
-            <ul class="mb-0">
-                {% for w in warnings %}
-                <li>{{ w }}</li>
-                {% endfor %}
-            </ul>
-        </div>
-        {% endif %}
-
-        {% if rows %}
-        <table class="table table-bordered table-striped">
-            <thead>
-                <tr>
-                    <th>Division</th>
-                    <th>Subject</th>
-                    <th>Teacher</th>
-                    <th>Assigned Time Slot</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for row in rows %}
-                <tr>
-                    <td>{{ row.division }}</td>
-                    <td>{{ row.subject.name }} ({{ row.subject.code }})</td>
-                    <td>{{ row.teacher }}</td>
-                    <td>
-                        {% if row.time_slot %}
-                            {{ row.time_slot }}
-                        {% else %}
-                            <span class="text-danger">No slot available</span>
-                        {% endif %}
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-        {% else %}
-        <p>No sessions to schedule yet. Add Divisions, Subjects (with a qualified teacher), and Time Slots in the <a href="/admin/">admin panel</a> first.</p>
-        {% endif %}
+<div class="top-bar">
+    <a href="{% url 'home' %}" class="back-link">&#8592; Back</a>
+    <h1>&#128197; Generated Timetable</h1>
+    <div class="badge-stat">
+        <strong>{{ num_sessions }}</strong> sessions &nbsp;&middot;&nbsp;
+        <strong>{{ num_colors_used }}</strong> colour(s) &nbsp;&middot;&nbsp; Graph Coloring
     </div>
+</div>
+
+<div class="main">
+
+    {% if warnings %}
+    <div class="alert-warn">
+        <strong>&#9888; Notes</strong>
+        <ul>
+            {% for w in warnings %}<li>{{ w }}</li>{% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
+    {% if not rows %}
+    <div class="empty-state">
+        <p style="font-size:3rem">&#128197;</p>
+        <p>No sessions to schedule yet.<br>
+           Add Divisions, Subjects (with a qualified teacher), and Time Slots in the
+           <a href="/admin/" style="color:var(--accent)">admin panel</a> first.
+        </p>
+    </div>
+
+    {% else %}
+
+    <div class="view-tabs">
+        <button class="view-tab active" onclick="switchTab(event,'grid-view')">&#128194; Weekly Grid (per Division)</button>
+        <button class="view-tab"        onclick="switchTab(event,'list-view')">&#128203; Session List</button>
+    </div>
+
+    <!-- ====== GRID VIEW ====== -->
+    <div id="grid-view" class="view-pane active">
+        {% for div in grid_by_division %}
+        <div class="division-block">
+            <div class="division-heading">
+                <div class="division-badge">{{ div.division|slice:":2" }}</div>
+                <div class="division-name">Division &mdash; {{ div.division }}</div>
+            </div>
+            <table class="tt-table">
+                <thead>
+                    <tr>
+                        <th>Time Slot</th>
+                        {% for day in div.days %}<th>{{ day }}</th>{% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for slot_label, cells in div.grid_rows %}
+                    <tr>
+                        <td class="time-cell">&#9200; {{ slot_label }}</td>
+                        {% for cell in cells %}
+                        <td>
+                            {% if cell %}
+                            <div class="session-cell">
+                                <div class="subj-code">{{ cell.subject_code }}</div>
+                                <div class="subj-name">{{ cell.subject_name }}</div>
+                                <div class="teacher-name">{{ cell.teacher }}</div>
+                            </div>
+                            {% else %}
+                            <span class="empty-cell">&mdash;</span>
+                            {% endif %}
+                        </td>
+                        {% endfor %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+
+            </table>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- ====== LIST VIEW ====== -->
+    <div id="list-view" class="view-pane">
+        <div class="card-surface">
+            <table class="list-table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Division</th>
+                        <th>Subject</th>
+                        <th>Teacher</th>
+                        <th>Day</th>
+                        <th>Time Slot</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in rows %}
+                    <tr>
+                        <td style="color:var(--muted);font-size:.8rem">{{ forloop.counter }}</td>
+                        <td><span class="div-tag">{{ row.division }}</span></td>
+                        <td>
+                            <strong>{{ row.subject.name }}</strong><br>
+                            <span style="color:var(--muted);font-size:.78rem">{{ row.subject.code }}</span>
+                        </td>
+                        <td style="color:var(--muted)">{{ row.teacher }}</td>
+                        <td>
+                            {% if row.time_slot %}
+                                {{ row.time_slot.get_day_display }}
+                            {% else %}
+                                <span class="no-slot">&mdash;</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if row.time_slot %}
+                                <span class="slot-tag">{{ row.time_slot }}</span>
+                            {% else %}
+                                <span class="no-slot">No slot available</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    {% endif %}
+</div>
+
+<script>
+function switchTab(e, paneId) {
+    document.querySelectorAll('.view-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.view-pane').forEach(p => p.classList.remove('active'));
+    e.currentTarget.classList.add('active');
+    document.getElementById(paneId).classList.add('active');
+}
+</script>
 </body>
 </html>
+

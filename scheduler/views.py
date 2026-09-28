@@ -68,6 +68,9 @@ def generate_timetable(request):
         sessions, warnings = build_sessions()
         print(sessions)
     """
+    from collections import OrderedDict
+    from .models import TimeSlot as TS
+
     sessions, warnings = build_sessions()
 
     try:
@@ -86,11 +89,94 @@ def generate_timetable(request):
             f"be placed."
         )
 
+    # ------------------------------------------------------------------ #
+    # Build per-division weekly grid for the visual timetable view.        #
+    # grid_by_division: list of                                            #
+    #   { "division": str, "days": [day_label, ...],                      #
+    #     "slots": [time_label, ...],                                      #
+    #     "grid": { time_label: { day_label: cell | None } } }            #
+    # ------------------------------------------------------------------ #
+    DAY_ORDER = ["MON", "TUE", "WED", "THU", "FRI", "SAT"]
+    DAY_LABELS = {
+        "MON": "Monday", "TUE": "Tuesday", "WED": "Wednesday",
+        "THU": "Thursday", "FRI": "Friday", "SAT": "Saturday",
+    }
+
+    # Collect all unique (day, start, end) combinations that actually appear
+    used_slots = []
+    seen = set()
+    for row in rows:
+        ts = row.get("time_slot")
+        if ts and (ts.day, ts.start_time, ts.end_time) not in seen:
+            seen.add((ts.day, ts.start_time, ts.end_time))
+            used_slots.append(ts)
+    # Sort: day order first, then start time
+    used_slots.sort(key=lambda s: (DAY_ORDER.index(s.day) if s.day in DAY_ORDER else 99, s.start_time))
+
+    # Unique time ranges (ignoring day) for rows of the grid
+    time_labels = []
+    seen_times = set()
+    for ts in used_slots:
+        label = f"{ts.start_time.strftime('%H:%M')}-{ts.end_time.strftime('%H:%M')}"
+        if label not in seen_times:
+            seen_times.add(label)
+            time_labels.append(label)
+
+    # Unique days that appear, in correct order
+    used_day_codes = []
+    seen_days = set()
+    for ts in used_slots:
+        if ts.day not in seen_days:
+            seen_days.add(ts.day)
+            used_day_codes.append(ts.day)
+    used_day_codes.sort(key=lambda d: DAY_ORDER.index(d) if d in DAY_ORDER else 99)
+    day_labels_ordered = [DAY_LABELS.get(d, d) for d in used_day_codes]
+
+    # Group rows by division
+    divisions_seen = OrderedDict()
+    for row in rows:
+        div_name = str(row["division"])
+        if div_name not in divisions_seen:
+            divisions_seen[div_name] = []
+        divisions_seen[div_name].append(row)
+
+    grid_by_division = []
+    for div_name, div_rows in divisions_seen.items():
+        # Build grid as 2-D list: grid_rows[i] = (slot_label, [cell|None, cell|None, ...])
+        # where cells are indexed in the same order as day_labels_ordered.
+        day_index = {dl: i for i, dl in enumerate(day_labels_ordered)}
+
+        # Start with all cells empty
+        raw_grid = {tl: [None] * len(day_labels_ordered) for tl in time_labels}
+
+        for row in div_rows:
+            ts = row.get("time_slot")
+            if ts:
+                tl = f"{ts.start_time.strftime('%H:%M')}-{ts.end_time.strftime('%H:%M')}"
+                dl = DAY_LABELS.get(ts.day, ts.day)
+                if tl in raw_grid and dl in day_index:
+                    raw_grid[tl][day_index[dl]] = {
+                        "subject_name": row["subject"].name,
+                        "subject_code": row["subject"].code,
+                        "teacher": str(row["teacher"]),
+                    }
+
+        # Convert to ordered list for the template
+        grid_rows = [(tl, raw_grid[tl]) for tl in time_labels]
+
+        grid_by_division.append({
+            "division": div_name,
+            "days": day_labels_ordered,
+            "grid_rows": grid_rows,   # list of (slot_label, [cell|None, ...])
+        })
+
+
     return render(request, "scheduler/timetable.html", {
         "rows": rows,
         "warnings": warnings,
         "num_sessions": len(sessions),
         "num_colors_used": num_colors_used,
+        "grid_by_division": grid_by_division,
     })
 
 

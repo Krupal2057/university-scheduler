@@ -46,24 +46,25 @@ def build_sessions():
     """
     Expand every Subject into one "session" per required hour per week.
 
-    Stage 9 addition: if a subject's usual (first qualified) teacher is
-    marked unavailable, automatically fall back to the next AVAILABLE
-    qualified teacher for that subject, and record it as an informative
-    (non-error) warning. This means every stage that calls build_sessions()
-    - Generate Timetable, Compare Algorithms, Diagnose - automatically
-    benefits from substitution, with no changes needed on their end.
+    Priority 1 - Step 1: BALANCED TEACHER ASSIGNMENT
+    When a subject has multiple qualified teachers, instead of always picking
+    the first one, we now pick the available teacher who has been assigned
+    the fewest sessions so far. This spreads workload evenly across faculty
+    rather than overloading one teacher while others sit at 0 hours.
+
+    Stage 9 addition (preserved): if the least-loaded teacher is still
+    unavailable, we fall back automatically to the next best available one.
 
     Returns:
         sessions: list of dicts, each {"subject": Subject, "teacher": Teacher}
-                  The position of a dict in this list IS its session_id,
-                  and must match the order written to the engine's input
-                  file exactly - the engine only ever deals with plain
-                  integer IDs (0, 1, 2, ...), not subject names.
-        warnings: list of strings - either "skipped" problems, or
-                  informative notes about an automatic substitution.
+                  The position of a dict in this list IS its session_id.
+        warnings: list of strings.
     """
     sessions = []
     warnings = []
+    # Track how many sessions have been assigned to each teacher so far.
+    # Key: teacher.id, Value: count of sessions assigned this build.
+    teacher_load: dict = {}
 
     for subject in Subject.objects.select_related("division").prefetch_related("qualified_teachers").order_by("id"):
         qualified = list(subject.qualified_teachers.all())
@@ -71,19 +72,30 @@ def build_sessions():
             warnings.append(f"Skipped '{subject}': no qualified teacher assigned.")
             continue
 
-        primary = qualified[0]
+        # Filter to only available teachers, then pick the least-loaded one.
+        available = [t for t in qualified if t.is_available]
 
-        if primary.is_available:
-            chosen = primary
-        else:
-            substitute = next((t for t in qualified[1:] if t.is_available), None)
-            if substitute is None:
-                warnings.append(
-                    f"Skipped '{subject}': primary teacher '{primary}' is unavailable and no "
-                    f"other qualified teacher for this subject is currently available."
-                )
-                continue
-            chosen = substitute
+        if not available:
+            primary = qualified[0]
+            warnings.append(
+                f"Skipped '{subject}': primary teacher '{primary}' is unavailable and no "
+                f"other qualified teacher for this subject is currently available."
+            )
+            continue
+
+        # Least-loaded heuristic: among available teachers, pick whoever has
+        # the fewest sessions assigned so far in this scheduling run.
+        chosen = min(available, key=lambda t: teacher_load.get(t.id, 0))
+
+        # Inform if the primary teacher was bypassed in favour of balance.
+        primary = qualified[0]
+        if chosen != primary and primary.is_available:
+            warnings.append(
+                f"Load-balance: '{subject}' assigned to '{chosen}' instead of '{primary}' "
+                f"('{primary}' has {teacher_load.get(primary.id, 0)} sessions, "
+                f"'{chosen}' has {teacher_load.get(chosen.id, 0)})."
+            )
+        elif chosen != primary and not primary.is_available:
             warnings.append(
                 f"Substitution: '{subject}' reassigned from unavailable '{primary}' to "
                 f"'{chosen}' (also a qualified teacher for this subject, currently available)."
@@ -91,6 +103,7 @@ def build_sessions():
 
         for _ in range(subject.hours_per_week):
             sessions.append({"subject": subject, "teacher": chosen})
+            teacher_load[chosen.id] = teacher_load.get(chosen.id, 0) + 1
 
     return sessions, warnings
 
@@ -196,28 +209,176 @@ def compare_algorithms():
     return results, warnings
 
 
+def _make_interleaved_slots():
+    """
+    Priority 1 - Step 2: INTERLEAVED (ROUND-ROBIN) SLOT ORDERING
+
+    The default DB ordering is: all Monday slots, then all Tuesday slots, etc.
+    With that order, graph-coloring colors 0-4 all land on Monday, so a
+    division with 5 sessions gets 5 back-to-back lectures on Monday.
+
+    Instead we order slots period-by-period across all days:
+      color 0 -> Monday    09:00-10:00
+      color 1 -> Tuesday   09:00-10:00
+      color 2 -> Wednesday 09:00-10:00
+      color 3 -> Thursday  09:00-10:00
+      color 4 -> Friday    09:00-10:00
+      color 5 -> Monday    10:00-11:00
+      color 6 -> Tuesday   10:00-11:00
+      ...
+
+    Result: adjacent colors always fall on DIFFERENT days, so the coloring
+    engine naturally distributes lectures across the whole week.
+    """
+    DAY_ORDER = ["MON", "TUE", "WED", "THU", "FRI", "SAT"]
+    all_slots = list(TimeSlot.objects.all())  # Meta.ordering = [day, start_time]
+
+    # Collect unique time periods in chronological order (start_time only).
+    seen_times = []
+    seen_set = set()
+    for s in all_slots:
+        if s.start_time not in seen_set:
+            seen_set.add(s.start_time)
+            seen_times.append(s.start_time)
+    seen_times.sort()
+
+    # Build a lookup: (day, start_time) -> TimeSlot
+    slot_map = {(s.day, s.start_time): s for s in all_slots}
+
+    # Round-robin: for each period, emit one slot per day (in day order).
+    interleaved = []
+    for period_start in seen_times:
+        for day_code in DAY_ORDER:
+            slot = slot_map.get((day_code, period_start))
+            if slot is not None:
+                interleaved.append(slot)
+
+    return interleaved
+
+
+def _spread_sessions_across_days(sessions, colors, available_slots):
+    """
+    Priority 1 - Step 3: DAY-AWARE COLOR-TO-SLOT ASSIGNMENT
+
+    The C++ engine assigns abstract integer colors (0, 1, 2, ...).  With the
+    interleaved slot ordering from Step 2, color 0 = Mon-P1, color 5 = Mon-P2,
+    color 10 = Mon-P3, etc.  A division with 5 sessions might get colors
+    0, 5, 10, 15, 20 -- all mapping to Monday, still stacked on one day.
+
+    Fix: for each division, when we see a color that belongs to period block B
+    (e.g. the 09:00-10:00 block), we can freely pick ANY day from that block
+    for this division -- because same-division sessions have DIFFERENT colors
+    (guaranteed by the engine) and therefore land in DIFFERENT period blocks.
+    So the only freedom we have is WHICH DAY within each block.
+
+    We use a greedy least-used-day rule per division:
+      - Sort the division's sessions by color (= by period block).
+      - For each period block, pick the day with the fewest sessions already
+        assigned to this division (breaking ties by day order Mon->Fri).
+
+    Returns: list of TimeSlot objects (one per session, parallel to sessions).
+             None for sessions where color >= available slots.
+    """
+    if not colors or not available_slots:
+        return [None] * len(sessions)
+
+    n = len(sessions)
+    num_slots = len(available_slots)
+
+    # Detect days_per_block from the interleaved structure:
+    # count how many slots share the same start_time as slot[0].
+    first_start = available_slots[0].start_time
+    days_per_block = sum(1 for s in available_slots if s.start_time == first_start)
+    if days_per_block == 0:
+        days_per_block = 1
+
+    # Build period blocks: block[b] = [slot, slot, ...] (one per available day).
+    num_blocks = (num_slots + days_per_block - 1) // days_per_block
+    blocks = []
+    for b in range(num_blocks):
+        start = b * days_per_block
+        end = min(start + days_per_block, num_slots)
+        blocks.append(available_slots[start:end])
+
+    # Group sessions by division.
+    from collections import defaultdict
+    div_sessions = defaultdict(list)  # division_id -> [(session_idx, color)]
+    for idx, (session, color) in enumerate(zip(sessions, colors)):
+        div_sessions[session["subject"].division_id].append((idx, color))
+
+    # Result array: session_idx -> TimeSlot
+    assigned = [None] * n
+
+    DAY_ORDER = ["MON", "TUE", "WED", "THU", "FRI", "SAT"]
+
+    for div_id, idx_color_pairs in div_sessions.items():
+        # Sort by color so we handle earlier period blocks first.
+        idx_color_pairs.sort(key=lambda x: x[1])
+
+        # Track: day_code -> number of sessions placed on that day for this division.
+        day_usage = defaultdict(int)
+        # Track: block_idx -> set of day_codes already used in that block.
+        block_taken = defaultdict(set)
+
+        for sess_idx, color in idx_color_pairs:
+            if color >= num_slots:
+                assigned[sess_idx] = None
+                continue
+
+            block_idx = color // days_per_block
+            if block_idx >= len(blocks):
+                assigned[sess_idx] = None
+                continue
+
+            block_slots = blocks[block_idx]
+
+            # Prefer days not yet taken in this block AND least used overall.
+            free_in_block = [s for s in block_slots if s.day not in block_taken[block_idx]]
+            candidates = free_in_block if free_in_block else list(block_slots)
+
+            # Sort candidates: first by ascending day_usage (least used day),
+            # then by DAY_ORDER for a stable tie-break.
+            candidates.sort(key=lambda s: (
+                day_usage[s.day],
+                DAY_ORDER.index(s.day) if s.day in DAY_ORDER else 99
+            ))
+
+            best = candidates[0]
+            assigned[sess_idx] = best
+            block_taken[block_idx].add(best.day)
+            day_usage[best.day] += 1
+
+    return assigned
+
+
 def build_timetable_rows(sessions, colors):
     """
     Map each session's assigned color (0, 1, 2, ...) to a real TimeSlot
-    row from the database, ordered by day then start time. Color 0 = the
-    first TimeSlot, color 1 = the second, and so on.
+    row from the database.
+
+    Priority 1 enhancements applied here:
+      - Step 2: slots are ordered INTERLEAVED (round-robin across days)
+        so adjacent color numbers fall on different days.
+      - Step 3: day-aware assignment picks, for each division's sessions,
+        the least-used day from the appropriate period block so lectures
+        are spread evenly Mon-Fri rather than clustering on one day.
 
     Returns:
         rows: list of dicts ready for the template: subject, division,
               teacher, time_slot (or None if we ran out of real slots).
         slot_shortage: True if more colors were used than TimeSlots exist.
     """
-    available_slots = list(TimeSlot.objects.all())  # already ordered, see Meta.ordering
-    slot_shortage = False
+    # Step 2: use round-robin interleaved ordering instead of day-clustered.
+    available_slots = _make_interleaved_slots()
+
+    # Step 3: day-aware assignment -- returns [TimeSlot|None] parallel to sessions.
+    assigned_slots = _spread_sessions_across_days(sessions, colors, available_slots)
+
+    num_colors_used = max(colors) + 1 if colors else 0
+    slot_shortage = num_colors_used > len(available_slots)
 
     rows = []
-    for session, color in zip(sessions, colors):
-        if color < len(available_slots):
-            time_slot = available_slots[color]
-        else:
-            time_slot = None
-            slot_shortage = True
-
+    for session, time_slot in zip(sessions, assigned_slots):
         rows.append({
             "subject": session["subject"],
             "division": session["subject"].division,
