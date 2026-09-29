@@ -26,7 +26,7 @@ import time
 
 from django.conf import settings
 
-from .models import Subject, TimeSlot
+from .models import Room, Subject, TimeSlot
 
 CPP_ENGINE_DIR = os.path.join(settings.BASE_DIR, "cpp_engine")
 
@@ -101,8 +101,36 @@ def build_sessions():
                 f"'{chosen}' (also a qualified teacher for this subject, currently available)."
             )
 
-        for _ in range(subject.hours_per_week):
-            sessions.append({"subject": subject, "teacher": chosen})
+        lab_sessions = subject.effective_lab_sessions
+        lab_dur = subject.lab_duration_slots
+        lec_slots = subject.lecture_slots
+
+        # Priority 2: Schedule Labs (continuous blocks of lab_dur slots)
+        for l_idx in range(lab_sessions):
+            lab_uid = f"lab_{subject.id}_{l_idx}"
+            for p in range(lab_dur):
+                sessions.append({
+                    "subject": subject,
+                    "teacher": chosen,
+                    "is_lab": True,
+                    "lab_id": lab_uid,
+                    "part_index": p + 1,
+                    "duration_slots": lab_dur,
+                    "session_type": "LAB",
+                })
+                teacher_load[chosen.id] = teacher_load.get(chosen.id, 0) + 1
+
+        # Schedule regular lectures (1 slot each)
+        for _ in range(lec_slots):
+            sessions.append({
+                "subject": subject,
+                "teacher": chosen,
+                "is_lab": False,
+                "lab_id": None,
+                "part_index": 1,
+                "duration_slots": 1,
+                "session_type": "LECTURE",
+            })
             teacher_load[chosen.id] = teacher_load.get(chosen.id, 0) + 1
 
     return sessions, warnings
@@ -256,137 +284,305 @@ def _make_interleaved_slots():
     return interleaved
 
 
-def _spread_sessions_across_days(sessions, colors, available_slots):
+def schedule_timetable(sessions):
     """
-    Priority 1 - Step 3: DAY-AWARE COLOR-TO-SLOT ASSIGNMENT
+    Priority 2: Lab Sessions Representation & Constraints + Multi-Resource Optimizer.
 
-    The C++ engine assigns abstract integer colors (0, 1, 2, ...).  With the
-    interleaved slot ordering from Step 2, color 0 = Mon-P1, color 5 = Mon-P2,
-    color 10 = Mon-P3, etc.  A division with 5 sessions might get colors
-    0, 5, 10, 15, 20 -- all mapping to Monday, still stacked on one day.
-
-    Fix: for each division, when we see a color that belongs to period block B
-    (e.g. the 09:00-10:00 block), we can freely pick ANY day from that block
-    for this division -- because same-division sessions have DIFFERENT colors
-    (guaranteed by the engine) and therefore land in DIFFERENT period blocks.
-    So the only freedom we have is WHICH DAY within each block.
-
-    We use a greedy least-used-day rule per division:
-      - Sort the division's sessions by color (= by period block).
-      - For each period block, pick the day with the fewest sessions already
-        assigned to this division (breaking ties by day order Mon->Fri).
-
-    Returns: list of TimeSlot objects (one per session, parallel to sessions).
-             None for sessions where color >= available slots.
+    Features:
+      1. Continuous Multi-Slot Labs: Each lab session is allocated to K continuous
+         time slots on the same day without crossing breaks.
+      2. Room Type & Capacity Matching:
+         - Labs are assigned to RoomType.LAB with capacity >= division strength.
+         - Lectures are assigned to RoomType.CLASSROOM with capacity >= division strength.
+      3. Zero Clashes Guaranteed (Fixes Bug 1):
+         - Teacher availability checked globally across all divisions.
+         - Division availability checked.
+         - Room availability checked (one class per room per slot).
+      4. Balanced Weekly Distribution:
+         - Labs spread evenly across days (at most 1 lab per division per day).
+         - Lectures spread across days (avoiding multiple lectures of the same subject on the same day).
+         - Teacher daily workload balanced across the week.
     """
-    if not colors or not available_slots:
-        return [None] * len(sessions)
-
-    n = len(sessions)
-    num_slots = len(available_slots)
-
-    # Detect days_per_block from the interleaved structure:
-    # count how many slots share the same start_time as slot[0].
-    first_start = available_slots[0].start_time
-    days_per_block = sum(1 for s in available_slots if s.start_time == first_start)
-    if days_per_block == 0:
-        days_per_block = 1
-
-    # Build period blocks: block[b] = [slot, slot, ...] (one per available day).
-    num_blocks = (num_slots + days_per_block - 1) // days_per_block
-    blocks = []
-    for b in range(num_blocks):
-        start = b * days_per_block
-        end = min(start + days_per_block, num_slots)
-        blocks.append(available_slots[start:end])
-
-    # Group sessions by division.
     from collections import defaultdict
-    div_sessions = defaultdict(list)  # division_id -> [(session_idx, color)]
-    for idx, (session, color) in enumerate(zip(sessions, colors)):
-        div_sessions[session["subject"].division_id].append((idx, color))
-
-    # Result array: session_idx -> TimeSlot
-    assigned = [None] * n
+    all_slots = list(TimeSlot.objects.order_by("day", "start_time"))
+    all_rooms = list(Room.objects.all())
 
     DAY_ORDER = ["MON", "TUE", "WED", "THU", "FRI", "SAT"]
 
-    for div_id, idx_color_pairs in div_sessions.items():
-        # Sort by color so we handle earlier period blocks first.
-        idx_color_pairs.sort(key=lambda x: x[1])
+    slots_by_day = defaultdict(list)
+    for s in all_slots:
+        slots_by_day[s.day].append(s)
 
-        # Track: day_code -> number of sessions placed on that day for this division.
-        day_usage = defaultdict(int)
-        # Track: block_idx -> set of day_codes already used in that block.
-        block_taken = defaultdict(set)
+    lab_rooms = [r for r in all_rooms if r.room_type == Room.RoomType.LAB]
+    class_rooms = [r for r in all_rooms if r.room_type == Room.RoomType.CLASSROOM]
+    fallback_rooms = [r for r in all_rooms if r.room_type != Room.RoomType.LAB]
 
-        for sess_idx, color in idx_color_pairs:
-            if color >= num_slots:
-                assigned[sess_idx] = None
-                continue
+    # Global occupancy tracking: prevents any double-booking
+    teacher_busy = defaultdict(set)   # (day, slot_id) -> set(teacher_ids)
+    division_busy = defaultdict(set)  # (day, slot_id) -> set(division_ids)
+    room_busy = defaultdict(set)      # (day, slot_id) -> set(room_ids)
 
-            block_idx = color // days_per_block
-            if block_idx >= len(blocks):
-                assigned[sess_idx] = None
-                continue
+    # Distribution tracking
+    div_day_labs = defaultdict(int)            # (division_id, day) -> count
+    div_subj_day_lecs = defaultdict(int)       # (division_id, subject_id, day) -> count
+    div_day_total = defaultdict(int)           # (division_id, day) -> count
+    teacher_day_total = defaultdict(int)       # (teacher_id, day) -> count
+    div_subj_has_lab_today = defaultdict(bool) # (division_id, subject_id, day) -> bool
 
-            block_slots = blocks[block_idx]
+    # Group sessions into lab groups and lecture items
+    lab_groups = defaultdict(list)
+    lecture_items = []
 
-            # Prefer days not yet taken in this block AND least used overall.
-            free_in_block = [s for s in block_slots if s.day not in block_taken[block_idx]]
-            candidates = free_in_block if free_in_block else list(block_slots)
+    for idx, s in enumerate(sessions):
+        if s.get("is_lab"):
+            lab_groups[s["lab_id"]].append((idx, s))
+        else:
+            lecture_items.append((idx, s))
 
-            # Sort candidates: first by ascending day_usage (least used day),
-            # then by DAY_ORDER for a stable tie-break.
-            candidates.sort(key=lambda s: (
-                day_usage[s.day],
-                DAY_ORDER.index(s.day) if s.day in DAY_ORDER else 99
-            ))
+    assigned = [None] * len(sessions)
 
-            best = candidates[0]
-            assigned[sess_idx] = best
-            block_taken[block_idx].add(best.day)
-            day_usage[best.day] += 1
+    # 1. SCHEDULE LABS (Most Constrained First)
+    for lab_id, group in lab_groups.items():
+        dur = group[0][1]["duration_slots"]
+        subject = group[0][1]["subject"]
+        teacher = group[0][1]["teacher"]
+        div = subject.division
+
+        valid_lab_rooms = [r for r in lab_rooms if r.capacity >= div.strength]
+        if not valid_lab_rooms:
+            valid_lab_rooms = lab_rooms if lab_rooms else all_rooms
+
+        best_candidate = None
+        best_score = float("inf")
+
+        days_sorted = sorted(
+            [d for d in DAY_ORDER if d in slots_by_day],
+            key=lambda d: (div_day_labs[(div.id, d)], div_day_total[(div.id, d)])
+        )
+
+        for day in days_sorted:
+            day_penalty = 100 * div_day_labs[(div.id, day)] if div_day_labs[(div.id, day)] >= 1 else 0
+            day_slots = slots_by_day[day]
+
+            for i in range(len(day_slots) - dur + 1):
+                block = day_slots[i:i + dur]
+                is_continuous = all(block[k].end_time == block[k + 1].start_time for k in range(dur - 1))
+                if not is_continuous:
+                    continue
+
+                if any(teacher.id in teacher_busy[(day, sl.id)] or div.id in division_busy[(day, sl.id)] for sl in block):
+                    continue
+
+                free_room = None
+                for r in valid_lab_rooms:
+                    if all(r.id not in room_busy[(day, sl.id)] for sl in block):
+                        free_room = r
+                        break
+                if not free_room:
+                    continue
+
+                score = (
+                    day_penalty
+                    + 10 * div_day_total[(div.id, day)]
+                    + 5 * teacher_day_total[(teacher.id, day)]
+                    + i
+                )
+
+                if score < best_score:
+                    best_score = score
+                    best_candidate = (day, block, free_room)
+
+        if best_candidate:
+            day, block, room = best_candidate
+            for (sess_idx, s), slot in zip(group, block):
+                assigned[sess_idx] = (slot, room)
+                teacher_busy[(day, slot.id)].add(teacher.id)
+                division_busy[(day, slot.id)].add(div.id)
+                room_busy[(day, slot.id)].add(room.id)
+                div_day_total[(div.id, day)] += 1
+                teacher_day_total[(teacher.id, day)] += 1
+            div_day_labs[(div.id, day)] += 1
+            div_subj_has_lab_today[(div.id, subject.id, day)] = True
+
+    # 2. SCHEDULE LECTURES
+    for idx, s in lecture_items:
+        subject = s["subject"]
+        teacher = s["teacher"]
+        div = subject.division
+
+        valid_classrooms = [r for r in class_rooms if r.capacity >= div.strength]
+        if not valid_classrooms:
+            valid_classrooms = fallback_rooms if fallback_rooms else all_rooms
+
+        best_candidate = None
+        best_score = float("inf")
+
+        days_sorted = sorted(
+            [d for d in DAY_ORDER if d in slots_by_day],
+            key=lambda d: (
+                div_subj_day_lecs[(div.id, subject.id, d)],
+                1 if div_subj_has_lab_today[(div.id, subject.id, d)] else 0,
+                div_day_total[(div.id, d)],
+                teacher_day_total[(teacher.id, d)],  # Bug 1 fix: was `day` (outer var), must be `d`
+            )
+        )
+
+        for day in days_sorted:
+            day_slots = slots_by_day[day]
+            subj_lecs_today = div_subj_day_lecs[(div.id, subject.id, day)]
+            has_lab_today = div_subj_has_lab_today[(div.id, subject.id, day)]
+
+            for slot_idx, slot in enumerate(day_slots):
+                if teacher.id in teacher_busy[(day, slot.id)] or div.id in division_busy[(day, slot.id)]:
+                    continue
+
+                free_room = None
+                for r in valid_classrooms:
+                    if r.id not in room_busy[(day, slot.id)]:
+                        free_room = r
+                        break
+                if not free_room:
+                    continue
+
+                score = (
+                    subj_lecs_today * 60
+                    + (25 if has_lab_today else 0)
+                    + div_day_total[(div.id, day)] * 5
+                    + teacher_day_total[(teacher.id, day)] * 3
+                    + slot_idx
+                )
+
+                if score < best_score:
+                    best_score = score
+                    best_candidate = (day, slot, free_room)
+
+        if best_candidate:
+            day, slot, room = best_candidate
+            assigned[idx] = (slot, room)
+            teacher_busy[(day, slot.id)].add(teacher.id)
+            division_busy[(day, slot.id)].add(div.id)
+            room_busy[(day, slot.id)].add(room.id)
+            div_day_total[(div.id, day)] += 1
+            teacher_day_total[(teacher.id, day)] += 1
+            div_subj_day_lecs[(div.id, subject.id, day)] += 1
 
     return assigned
 
 
 def build_timetable_rows(sessions, colors):
     """
-    Map each session's assigned color (0, 1, 2, ...) to a real TimeSlot
-    row from the database.
-
-    Priority 1 enhancements applied here:
-      - Step 2: slots are ordered INTERLEAVED (round-robin across days)
-        so adjacent color numbers fall on different days.
-      - Step 3: day-aware assignment picks, for each division's sessions,
-        the least-used day from the appropriate period block so lectures
-        are spread evenly Mon-Fri rather than clustering on one day.
-
-    Returns:
-        rows: list of dicts ready for the template: subject, division,
-              teacher, time_slot (or None if we ran out of real slots).
-        slot_shortage: True if more colors were used than TimeSlots exist.
+    Map each session to a conflict-free (TimeSlot, Room) pair using the
+    Python multi-resource scheduler (schedule_timetable). The `colors`
+    parameter from the C++ engine is no longer used for placement — it is
+    kept in the signature for backward compatibility with the compare/diagnose
+    views that call run_graph_coloring() separately.
     """
-    # Step 2: use round-robin interleaved ordering instead of day-clustered.
-    available_slots = _make_interleaved_slots()
+    assigned_slots_and_rooms = schedule_timetable(sessions)
 
-    # Step 3: day-aware assignment -- returns [TimeSlot|None] parallel to sessions.
-    assigned_slots = _spread_sessions_across_days(sessions, colors, available_slots)
-
-    num_colors_used = max(colors) + 1 if colors else 0
-    slot_shortage = num_colors_used > len(available_slots)
+    # Bug 4 fix: num_colors_used must reflect the Python scheduler output,
+    # not the stale C++ coloring. Count distinct (day, slot) pairs actually
+    # assigned — that's the real number of distinct time slots consumed.
+    assigned_slot_ids = set(
+        item[0].id for item in assigned_slots_and_rooms if item is not None
+    )
+    num_colors_used = len(assigned_slot_ids)
+    slot_shortage = any(a is None for a in assigned_slots_and_rooms)
 
     rows = []
-    for session, time_slot in zip(sessions, assigned_slots):
+    for session, item in zip(sessions, assigned_slots_and_rooms):
+        slot, room = item if item else (None, None)
         rows.append({
             "subject": session["subject"],
             "division": session["subject"].division,
             "teacher": session["teacher"],
-            "time_slot": time_slot,
+            "time_slot": slot,
+            "room": room,
+            "is_lab": session.get("is_lab", False),
+            "session_type": session.get("session_type", "LECTURE"),
+            "duration_slots": session.get("duration_slots", 1),
+            "part_index": session.get("part_index", 1),
+            "lab_id": session.get("lab_id"),
         })
 
     return rows, slot_shortage
+
+
+def verify_timetable_conflicts(rows):
+    """
+    Independent comprehensive conflict and constraint verifier:
+      - Teacher double booking across all divisions
+      - Division double booking
+      - Room double booking
+      - Lab room type verification (must be LAB)
+      - Lab continuity check (continuous slots on same day)
+    Returns: list of error strings (empty if 100% clash-free).
+    """
+    from collections import defaultdict
+    violations = []
+    teacher_slots = {}
+    div_slots = {}
+    room_slots = {}
+    lab_parts = defaultdict(list)
+
+    for idx, r in enumerate(rows):
+        slot = r.get("time_slot")
+        room = r.get("room")
+        if not slot:
+            continue
+
+        t_key = (r["teacher"].id, slot.id)
+        d_key = (r["division"].id, slot.id)
+        r_key = (room.id, slot.id) if room else None
+
+        if t_key in teacher_slots:
+            other = rows[teacher_slots[t_key]]
+            violations.append(
+                f"Teacher clash: {r['teacher']} double-booked at {slot} for "
+                f"{r['subject'].code} ({r['division']}) and {other['subject'].code} ({other['division']})."
+            )
+        else:
+            teacher_slots[t_key] = idx
+
+        if d_key in div_slots:
+            other = rows[div_slots[d_key]]
+            violations.append(
+                f"Division clash: {r['division']} has both {r['subject'].code} "
+                f"and {other['subject'].code} at {slot}."
+            )
+        else:
+            div_slots[d_key] = idx
+
+        if r_key:
+            if r_key in room_slots:
+                other = rows[room_slots[r_key]]
+                violations.append(
+                    f"Room clash: {room.name} double-booked at {slot} for "
+                    f"{r['subject'].code} ({r['division']}) and {other['subject'].code} ({other['division']})."
+                )
+            else:
+                room_slots[r_key] = idx
+
+        if r.get("is_lab"):
+            if room and room.room_type != Room.RoomType.LAB:
+                violations.append(
+                    f"Room type mismatch: Lab session {r['subject'].code} assigned to non-lab room {room.name}."
+                )
+            lab_parts[r.get("lab_id")].append(r)
+
+    for lab_id, parts in lab_parts.items():
+        if len(parts) > 1:
+            # Bug 5 fix: sort by actual (day, start_time) not by part_index,
+            # so duplicate or missing part indices don't hide continuity errors.
+            parts.sort(key=lambda x: (x["time_slot"].day, x["time_slot"].start_time))
+            for i in range(len(parts) - 1):
+                s1 = parts[i]["time_slot"]
+                s2 = parts[i + 1]["time_slot"]
+                if s1.day != s2.day or s1.end_time != s2.start_time:
+                    violations.append(
+                        f"Lab continuity error: {parts[0]['subject'].code} lab {lab_id} slots are not continuous ({s1} and {s2})."
+                    )
+
+    return violations
 
 
 BACKTRACKING_ENGINE = os.path.join(CPP_ENGINE_DIR, "backtracking_engine")

@@ -171,9 +171,51 @@
             padding: 8px 10px;
             border: 1px solid rgba(124,111,205,.3);
             text-align: left;
+            transition: transform .15s, box-shadow .15s;
         }
-        .session-cell .subj-code { font-weight: 700; color: #a78bf6; font-size: .76rem; margin-bottom: 2px; }
-        .session-cell .subj-name  { color: var(--text); font-weight: 500; font-size: .8rem; line-height: 1.3; margin-bottom: 4px; }
+        .session-cell:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 14px rgba(0,0,0,.3);
+        }
+        .session-cell.lab-cell {
+            background: rgba(6, 182, 212, 0.12);
+            border: 1px solid rgba(6, 182, 212, 0.45);
+            box-shadow: 0 0 10px rgba(6, 182, 212, 0.12);
+        }
+        .badge-lab {
+            display: inline-block;
+            padding: 2px 7px;
+            background: rgba(6, 182, 212, 0.22);
+            border: 1px solid rgba(6, 182, 212, 0.55);
+            border-radius: 4px;
+            font-size: .68rem;
+            font-weight: 700;
+            color: #38bdf8;
+            letter-spacing: .02em;
+        }
+        .badge-lec {
+            display: inline-block;
+            padding: 2px 6px;
+            background: rgba(124, 111, 205, 0.18);
+            border: 1px solid rgba(124, 111, 205, 0.4);
+            border-radius: 4px;
+            font-size: .68rem;
+            font-weight: 600;
+            color: #a78bf6;
+        }
+        .badge-room {
+            display: inline-block;
+            font-size: .72rem;
+            color: #94a3b8;
+            background: rgba(255, 255, 255, 0.05);
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin-top: 5px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .session-cell .subj-code { font-weight: 700; color: #a78bf6; font-size: .76rem; }
+        .session-cell.lab-cell .subj-code { color: #38bdf8; }
+        .session-cell .subj-name  { color: var(--text); font-weight: 500; font-size: .8rem; line-height: 1.3; margin: 3px 0; }
         .session-cell .teacher-name { color: var(--muted); font-size: .72rem; }
         .empty-cell { color: var(--border); font-size: .75rem; opacity: .5; }
         .card-surface {
@@ -238,8 +280,14 @@
     <a href="{% url 'home' %}" class="back-link">&#8592; Back</a>
     <h1>&#128197; Generated Timetable</h1>
     <div class="badge-stat">
-        <strong>{{ num_sessions }}</strong> sessions &nbsp;&middot;&nbsp;
-        <strong>{{ num_colors_used }}</strong> colour(s) &nbsp;&middot;&nbsp; Graph Coloring
+        <strong>{{ num_sessions }}</strong> total slots &nbsp;&middot;&nbsp;
+        <strong style="color:#38bdf8">&#128300; {{ num_labs }}</strong> lab blocks (2-hr) &nbsp;&middot;&nbsp;
+        <strong>{{ num_lectures }}</strong> lectures &nbsp;&middot;&nbsp;
+        {% if timetable_violations %}
+            <span style="color:var(--danger)">&#9888; {{ timetable_violations|length }} Clashes</span>
+        {% else %}
+            <span style="color:#34d399">&#10003; 0 Clashes Verified</span>
+        {% endif %}
     </div>
 </div>
 
@@ -292,10 +340,22 @@
                         {% for cell in cells %}
                         <td>
                             {% if cell %}
-                            <div class="session-cell">
-                                <div class="subj-code">{{ cell.subject_code }}</div>
+                            <div class="session-cell {% if cell.is_lab %}lab-cell{% endif %}">
+                                <div style="display:flex; justify-content:space-between; align-items:center;">
+                                    <span class="subj-code">{{ cell.subject_code }}</span>
+                                    {% if cell.is_lab %}
+                                        <span class="badge-lab">&#128300; LAB ({{ cell.part_index }}/{{ cell.duration_slots }})</span>
+                                    {% else %}
+                                        <span class="badge-lec">&#128214; LEC</span>
+                                    {% endif %}
+                                </div>
                                 <div class="subj-name">{{ cell.subject_name }}</div>
-                                <div class="teacher-name">{{ cell.teacher }}</div>
+                                <div class="teacher-name">&#128100; {{ cell.teacher }}</div>
+                                {% if cell.room %}
+                                <div class="badge-room">
+                                    {% if cell.is_lab %}&#127963; {{ cell.room.name }} (LAB){% else %}&#127979; Room {{ cell.room.name }}{% endif %}
+                                </div>
+                                {% endif %}
                             </div>
                             {% else %}
                             <span class="empty-cell">&mdash;</span>
@@ -319,8 +379,10 @@
                     <tr>
                         <th>#</th>
                         <th>Division</th>
+                        <th>Type</th>
                         <th>Subject</th>
                         <th>Teacher</th>
+                        <th>Room</th>
                         <th>Day</th>
                         <th>Time Slot</th>
                     </tr>
@@ -331,10 +393,26 @@
                         <td style="color:var(--muted);font-size:.8rem">{{ forloop.counter }}</td>
                         <td><span class="div-tag">{{ row.division }}</span></td>
                         <td>
+                            {% if row.is_lab %}
+                                <span class="badge-lab">&#128300; LAB (Part {{ row.part_index }}/{{ row.duration_slots }})</span>
+                            {% else %}
+                                <span class="badge-lec">&#128214; LECTURE</span>
+                            {% endif %}
+                        </td>
+                        <td>
                             <strong>{{ row.subject.name }}</strong><br>
                             <span style="color:var(--muted);font-size:.78rem">{{ row.subject.code }}</span>
                         </td>
-                        <td style="color:var(--muted)">{{ row.teacher }}</td>
+                        <td style="color:var(--muted)">&#128100; {{ row.teacher }}</td>
+                        <td>
+                            {% if row.room %}
+                                <span class="badge-room">
+                                    {% if row.is_lab %}&#127963; {{ row.room.name }} (LAB){% else %}&#127979; Room {{ row.room.name }}{% endif %}
+                                </span>
+                            {% else %}
+                                <span class="no-slot">&mdash;</span>
+                            {% endif %}
+                        </td>
                         <td>
                             {% if row.time_slot %}
                                 {{ row.time_slot.get_day_display }}
@@ -355,6 +433,7 @@
             </table>
         </div>
     </div>
+
 
     {% endif %}
 </div>

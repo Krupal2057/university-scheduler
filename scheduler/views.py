@@ -12,6 +12,7 @@ from .timetable_service import (
     compare_algorithms,
     diagnose_schedulability,
     run_graph_coloring,
+    verify_timetable_conflicts,
 )
 
 
@@ -82,11 +83,11 @@ def generate_timetable(request):
     rows, slot_shortage = build_timetable_rows(sessions, colors)
 
     if slot_shortage:
+        unplaced = sum(1 for r in rows if r.get("time_slot") is None)
         warnings.append(
-            f"The algorithm needed {num_colors_used} distinct time slots, but "
-            f"fewer than that exist in the database. Add more Time Slots in "
-            f"the admin panel. Rows below with a blank time slot could not "
-            f"be placed."
+            f"{unplaced} session(s) could not be placed — not enough free time slots exist "
+            f"in the database after accounting for teacher, division, and room constraints. "
+            f"Add more Time Slots in the admin panel, or reduce subject hours."
         )
 
     # ------------------------------------------------------------------ #
@@ -159,6 +160,12 @@ def generate_timetable(request):
                         "subject_name": row["subject"].name,
                         "subject_code": row["subject"].code,
                         "teacher": str(row["teacher"]),
+                        "room": row.get("room"),
+                        "is_lab": row.get("is_lab", False),
+                        "session_type": row.get("session_type", "LECTURE"),
+                        "duration_slots": row.get("duration_slots", 1),
+                        "part_index": row.get("part_index", 1),
+                        "lab_id": row.get("lab_id"),
                     }
 
         # Convert to ordered list for the template
@@ -170,13 +177,22 @@ def generate_timetable(request):
             "grid_rows": grid_rows,   # list of (slot_label, [cell|None, ...])
         })
 
+    timetable_violations = verify_timetable_conflicts(rows)
+    for v in timetable_violations:
+        warnings.append(f"Conflict: {v}")
+
+    num_labs = len(set(r["lab_id"] for r in rows if r.get("is_lab") and r.get("lab_id")))
+    num_lectures = sum(1 for r in rows if not r.get("is_lab"))
 
     return render(request, "scheduler/timetable.html", {
         "rows": rows,
         "warnings": warnings,
         "num_sessions": len(sessions),
         "num_colors_used": num_colors_used,
+        "num_labs": num_labs,
+        "num_lectures": num_lectures,
         "grid_by_division": grid_by_division,
+        "timetable_violations": timetable_violations,
     })
 
 

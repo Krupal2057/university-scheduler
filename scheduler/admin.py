@@ -22,7 +22,7 @@ class TeacherAdmin(admin.ModelAdmin):
 
 @admin.register(Subject)
 class SubjectAdmin(admin.ModelAdmin):
-    list_display = ("code", "name", "division", "hours_per_week", "requires_lab")
+    list_display = ("code", "name", "division", "hours_per_week", "requires_lab", "lab_sessions_per_week", "lab_duration_slots")
     list_filter = ("division", "requires_lab")
     filter_horizontal = ("qualified_teachers",)
 

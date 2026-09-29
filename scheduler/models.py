@@ -75,10 +75,36 @@ class Subject(models.Model):
         help_text="How many time slots per week this subject needs."
     )
     requires_lab = models.BooleanField(default=False)
+    lab_sessions_per_week = models.PositiveIntegerField(
+        default=1,
+        help_text="Number of lab sessions per week (default 1 if requires_lab is True).",
+    )
+    lab_duration_slots = models.PositiveIntegerField(
+        default=2,
+        help_text="Duration in continuous time slots per lab session (e.g. 2 hours).",
+    )
     qualified_teachers = models.ManyToManyField(Teacher, related_name="subjects_taught")
 
+    @property
+    def effective_lab_sessions(self):
+        return self.lab_sessions_per_week if self.requires_lab else 0
+
+    @property
+    def total_lab_slots(self):
+        return self.effective_lab_sessions * self.lab_duration_slots
+
+    @property
+    def lecture_slots(self):
+        if not self.requires_lab or self.effective_lab_sessions == 0:
+            return self.hours_per_week
+        if self.hours_per_week >= self.total_lab_slots:
+            return self.hours_per_week - self.total_lab_slots
+        # Bug 2 fix: lab slots exceed total hours — no lectures left, not hours_per_week.
+        return 0
+
     def __str__(self):
-        return f"{self.code} - {self.name} ({self.division})"
+        lab_tag = f" [LAB: {self.effective_lab_sessions}x{self.lab_duration_slots}h]" if self.requires_lab else ""
+        return f"{self.code} - {self.name} ({self.division}){lab_tag}"
 
 
 class TimeSlot(models.Model):

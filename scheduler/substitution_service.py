@@ -28,20 +28,19 @@ Two factors decide whether a candidate is a real suggestion:
 from .models import Subject, Teacher
 
 
-def _teacher_current_workload(teacher):
+def _teacher_current_workload(teacher, sessions=None):
     """
     How many sessions per week this teacher is ALREADY assigned to teach,
-    using the same rule as build_sessions(): only subjects where this
-    teacher is the FIRST qualified teacher count as "assigned" to them.
-    (Being second or third choice on some other subject doesn't add load -
-    that subject is being taught by someone else, unless a substitution
-    happened - see build_sessions() for the full rule.)
+    computed directly from build_sessions() so workload numbers match the
+    actual scheduler pipeline exactly.
+
+    Pass a pre-built `sessions` list to avoid redundant DB calls (Bug 3 fix).
+    If omitted, build_sessions() is called once internally.
     """
-    total = 0
-    for subject in Subject.objects.filter(qualified_teachers=teacher):
-        if subject.qualified_teachers.first().id == teacher.id:
-            total += subject.hours_per_week
-    return total
+    if sessions is None:
+        from .timetable_service import build_sessions
+        sessions, _ = build_sessions()
+    return sum(1 for s in sessions if s["teacher"].id == teacher.id)
 
 
 def suggest_teacher_substitutes(subject_id):
@@ -83,9 +82,17 @@ def suggest_teacher_substitutes(subject_id):
     available_alternatives = [t for t in alternatives if t.is_available]
     unavailable_alternatives = [t for t in alternatives if not t.is_available]
 
+    # Bug 3 fix: call build_sessions() exactly ONCE and reuse the result for
+    # all workload lookups, instead of N+1 separate DB queries (one per teacher).
+    from .timetable_service import build_sessions
+    all_sessions, _ = build_sessions()
+
+    def _workload(teacher):
+        return sum(1 for s in all_sessions if s["teacher"].id == teacher.id)
+
     suggestions = []
     for teacher in available_alternatives:
-        current_workload = _teacher_current_workload(teacher)
+        current_workload = _workload(teacher)
         projected_workload = current_workload + subject.hours_per_week
         over_cap = projected_workload > teacher.max_hours_per_week
 
@@ -121,7 +128,7 @@ def suggest_teacher_substitutes(subject_id):
         "subject": subject,
         "current_teacher": current_teacher,
         "current_teacher_unavailable": bool(current_teacher and not current_teacher.is_available),
-        "current_teacher_workload": _teacher_current_workload(current_teacher) if current_teacher else None,
+        "current_teacher_workload": _workload(current_teacher) if current_teacher else None,
         "suggestions": suggestions,
         "unavailable_alternatives": unavailable_alternatives,
     }
