@@ -1,75 +1,90 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>Algorithm Comparison</title>
-    <link
-        href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
-        rel="stylesheet">
-</head>
-<body>
-    <div class="container py-5">
-        <a href="{% url 'home' %}">&larr; Back</a>
-        <h1 class="mt-2 mb-3">Algorithm Comparison</h1>
-        <p class="text-muted">
-            Every number below was measured by actually running each algorithm
-            on your current database data - nothing here is estimated or made up.
-        </p>
+{% extends "scheduler/base.html" %}
+{% block title %}Algorithm Comparison — University Scheduler{% endblock %}
+{% block page_title %}Algorithm Comparison{% endblock %}
+{% block page_sub %}Real benchmark results on your current database{% endblock %}
+{% block nav_compare %}active{% endblock %}
 
-        {% if warnings %}
-        <div class="alert alert-warning">
-            <strong>Notes:</strong>
-            <ul class="mb-0">
-                {% for w in warnings %}
-                <li>{{ w }}</li>
-                {% endfor %}
-            </ul>
-        </div>
-        {% endif %}
+{% block content %}
+{% if warnings %}
+<div class="flash-list" style="margin-bottom:20px;">
+    {% for w in warnings %}
+    <div class="flash-item flash-warning"><i class="bi bi-exclamation-triangle-fill"></i> {{ w }}</div>
+    {% endfor %}
+</div>
+{% endif %}
 
-        {% if results %}
-        <table class="table table-bordered table-striped">
-            <thead>
-                <tr>
-                    <th>Algorithm</th>
-                    <th>Sessions Scheduled</th>
-                    <th>Time Slots Used</th>
-                    <th>Execution Time (ms)</th>
-                    <th>Conflicts (should be 0)</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for r in results %}
-                <tr>
-                    <td>{{ r.name }}</td>
-                    <td>{{ r.num_sessions }}</td>
-                    <td>{{ r.num_slots_used }}</td>
-                    <td>{{ r.elapsed_ms }}</td>
-                    <td>
-                        {% if r.conflicts == 0 %}
-                            <span class="text-success">0</span>
-                        {% else %}
-                            <span class="text-danger">{{ r.conflicts }}</span>
-                        {% endif %}
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-
-        <div class="card">
-            <div class="card-body">
-                <h5 class="card-title">How to read this table</h5>
-                <ul class="mb-0">
-                    <li><strong>Time Slots Used</strong> — fewer is better: it means a more compact timetable.</li>
-                    <li><strong>Execution Time</strong> — Graph Coloring does extra work up front (sorting sessions by how constrained they are) that Greedy skips, so expect Graph Coloring to usually take a little longer, even when both use the same number of slots.</li>
-                    <li><strong>Conflicts</strong> — independently re-checked, not just trusted from the engine. Should always read 0. If it doesn't, that's a real bug to fix, not a display issue.</li>
-                </ul>
-            </div>
-        </div>
-        {% else %}
-        <p>No sessions to compare yet. Add Divisions, Subjects (with a qualified teacher), and Time Slots in the <a href="/admin/">admin panel</a> first.</p>
-        {% endif %}
+{% if results %}
+<div class="card" style="margin-bottom:24px;">
+    <div class="card-header">
+        <i class="bi bi-bar-chart-line" style="color:var(--accent);"></i>
+        <h3>Benchmark Results</h3>
+        <span style="margin-left:auto;font-size:.78rem;color:var(--muted);">Every number measured from real data — nothing is estimated</span>
     </div>
-</body>
-</html>
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Algorithm</th>
+                <th>Sessions Scheduled</th>
+                <th>Time Slots Used</th>
+                <th>Execution Time</th>
+                <th>Conflicts</th>
+                <th>Winner?</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for r in results %}
+            <tr>
+                <td><strong>{{ r.name }}</strong></td>
+                <td>{{ r.num_sessions }}</td>
+                <td>
+                    <span class="badge {% if forloop.first %}badge-green{% else %}badge-purple{% endif %}">
+                        {{ r.num_slots_used }}
+                    </span>
+                </td>
+                <td>{{ r.elapsed_ms }} ms</td>
+                <td>
+                    {% if r.conflicts == 0 %}
+                    <span class="badge badge-green"><i class="bi bi-check-circle"></i> 0</span>
+                    {% else %}
+                    <span class="badge badge-red"><i class="bi bi-x-circle"></i> {{ r.conflicts }}</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if r.conflicts == 0 and forloop.first %}
+                    <span class="badge badge-yellow">⭐ Best</span>
+                    {% endif %}
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <i class="bi bi-info-circle" style="color:var(--info);"></i>
+        <h3>How to Read This Table</h3>
+    </div>
+    <div class="card-body">
+        <div style="display:flex;flex-direction:column;gap:12px;font-size:.875rem;color:var(--muted);">
+            <div><strong style="color:var(--text);">Time Slots Used</strong> — fewer is better: a more compact timetable means less wasted room/teacher time.</div>
+            <div><strong style="color:var(--text);">Execution Time</strong> — Graph Coloring pre-sorts sessions by constraint degree, so expect it to take slightly longer than Greedy even when both use the same slots.</div>
+            <div><strong style="color:var(--text);">Conflicts</strong> — independently re-verified, not just trusted from the engine. Should always be 0. A non-zero value is a real bug, not a display artifact.</div>
+        </div>
+    </div>
+</div>
+
+{% else %}
+<div class="empty-state">
+    <i class="bi bi-bar-chart-line"></i>
+    <p>No sessions to compare yet.</p>
+    <p style="margin-top:8px;font-size:.85rem;">
+        Add Divisions, Subjects (with a qualified teacher), and Time Slots first,
+        then come back here.
+    </p>
+    <a href="{% url 'data_divisions' %}" class="btn btn-primary" style="margin-top:16px;">
+        <i class="bi bi-people"></i> Go to Divisions
+    </a>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,44 @@
+{% extends "scheduler/base.html" %}
+{% block title %}Edit Teacher — University Scheduler{% endblock %}
+{% block page_title %}Edit Teacher{% endblock %}
+{% block page_sub %}{{ obj.name }}{% endblock %}
+{% block nav_teachers %}active{% endblock %}
+
+{% block content %}
+<div style="max-width:560px;">
+<div class="card">
+    <div class="card-header">
+        <i class="bi bi-pencil-square" style="color:var(--accent);"></i>
+        <h3>Edit — {{ obj.name }}</h3>
+        <a href="{% url 'data_teachers' %}" class="btn btn-secondary btn-sm" style="margin-left:auto;"><i class="bi bi-arrow-left"></i> Back</a>
+    </div>
+    <div class="card-body">
+        <form method="post">
+            {% csrf_token %}
+            {% for field in form %}
+            {% if field.widget_type == 'checkbox' %}
+            <div class="form-group">
+                <div class="form-check">
+                    {{ field }} <label class="form-check-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+                </div>
+                {% if field.help_text %}<div style="font-size:.72rem;color:var(--muted);margin-top:4px;">{{ field.help_text }}</div>{% endif %}
+            </div>
+            {% else %}
+            <div class="form-group">
+                <label class="form-label">{{ field.label }}</label>
+                {{ field }}
+                {% if field.errors %}<div class="form-error">{{ field.errors|join:", " }}</div>{% endif %}
+                {% if field.help_text %}<div style="font-size:.72rem;color:var(--muted);margin-top:4px;">{{ field.help_text }}</div>{% endif %}
+            </div>
+            {% endif %}
+            {% endfor %}
+            <hr class="divider">
+            <div style="display:flex;gap:10px;">
+                <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Save Changes</button>
+                <a href="{% url 'data_teachers' %}" class="btn btn-secondary">Cancel</a>
+            </div>
+        </form>
+    </div>
+</div>
+</div>
+{% endblock %}

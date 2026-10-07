@@ -1,102 +1,142 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>Find a Substitute Teacher</title>
-    <link
-        href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
-        rel="stylesheet">
-</head>
-<body>
-    <div class="container py-5">
-        <a href="{% url 'home' %}">&larr; Back</a>
-        <h1 class="mt-2 mb-3">Find a Substitute Teacher</h1>
-        <p class="text-muted">Pick a subject to see who else is qualified to teach it, ranked by workload.</p>
+{% extends "scheduler/base.html" %}
+{% block title %}Find Substitute — University Scheduler{% endblock %}
+{% block page_title %}Find a Substitute Teacher{% endblock %}
+{% block page_sub %}Pick a subject to see ranked replacement options{% endblock %}
+{% block nav_substitute %}active{% endblock %}
 
-        <form method="get" class="mb-4">
-            <div class="input-group">
-                <select name="subject_id" class="form-select" onchange="this.form.submit()">
-                    <option value="">-- Select a subject --</option>
-                    {% for s in all_subjects %}
-                    <option value="{{ s.id }}" {% if selected_subject_id == s.id|stringformat:"s" %}selected{% endif %}>
-                        {{ s.code }} - {{ s.name }} ({{ s.division }})
-                    </option>
-                    {% endfor %}
-                </select>
-                <noscript><button class="btn btn-primary" type="submit">Go</button></noscript>
+{% block content %}
+<!-- Subject selector -->
+<div class="card" style="margin-bottom:24px;">
+    <div class="card-header">
+        <i class="bi bi-person-gear" style="color:var(--accent);"></i>
+        <h3>Select Subject</h3>
+    </div>
+    <div class="card-body">
+        <form method="get">
+            <div style="display:flex;gap:12px;align-items:flex-end;">
+                <div class="form-group" style="flex:1;margin-bottom:0;">
+                    <label class="form-label">Subject</label>
+                    <select name="subject_id" class="form-select" onchange="this.form.submit()" id="subjectSelect">
+                        <option value="">— Select a subject —</option>
+                        {% for s in all_subjects %}
+                        <option value="{{ s.id }}" {% if selected_subject_id == s.id|stringformat:"s" %}selected{% endif %}>
+                            {{ s.code }} – {{ s.name }} ({{ s.division }})
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <noscript>
+                    <button type="submit" class="btn btn-primary">Go</button>
+                </noscript>
             </div>
         </form>
+    </div>
+</div>
 
-        {% if result %}
-            {% if result.error %}
-            <div class="alert alert-danger">{{ result.error }}</div>
+{% if result %}
+    {% if result.error %}
+    <div class="flash-item flash-error"><i class="bi bi-x-circle-fill"></i> {{ result.error }}</div>
 
-            {% else %}
-            <div class="card mb-3">
-                <div class="card-body">
-                    <h5 class="card-title">{{ result.subject.code }} - {{ result.subject.name }} ({{ result.subject.division }})</h5>
-                    {% if result.current_teacher %}
-                    <p class="mb-0">
-                        Currently assigned to: <strong>{{ result.current_teacher.name }}</strong>
-                        ({{ result.current_teacher_workload }} hrs/week total)
-                        {% if result.current_teacher_unavailable %}
-                            <span class="badge bg-danger">Currently unavailable</span>
-                        {% else %}
-                            <span class="badge bg-success">Available</span>
-                        {% endif %}
-                    </p>
+    {% else %}
+    <!-- Current teacher info -->
+    <div class="card" style="margin-bottom:20px;">
+        <div class="card-header">
+            <i class="bi bi-person-circle" style="color:var(--accent);"></i>
+            <h3>{{ result.subject.code }} — {{ result.subject.name }}</h3>
+            <span style="margin-left:auto;color:var(--muted);font-size:.82rem;">{{ result.subject.division }}</span>
+        </div>
+        <div class="card-body">
+            {% if result.current_teacher %}
+            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+                <div>
+                    <div style="font-size:.75rem;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.05em;">Current Teacher</div>
+                    <div style="font-size:.95rem;font-weight:600;margin-top:3px;">{{ result.current_teacher.name }}</div>
+                </div>
+                <div>
+                    <div style="font-size:.75rem;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.05em;">Workload</div>
+                    <div style="font-size:.95rem;font-weight:600;margin-top:3px;">{{ result.current_teacher_workload }} hrs/wk</div>
+                </div>
+                <div>
+                    {% if result.current_teacher_unavailable %}
+                    <span class="badge badge-red"><i class="bi bi-x-circle"></i> Currently Unavailable</span>
                     {% else %}
-                    <p class="mb-0 text-danger">No teacher currently assigned to this subject.</p>
+                    <span class="badge badge-green"><i class="bi bi-check-circle"></i> Available</span>
                     {% endif %}
                 </div>
             </div>
-
-            {% if result.unavailable_alternatives %}
-            <div class="alert alert-secondary">
-                Also qualified for this subject, but currently marked unavailable (excluded below):
-                {% for t in result.unavailable_alternatives %}{{ t.name }}{% if not forloop.last %}, {% endif %}{% endfor %}
-            </div>
-            {% endif %}
-
-            {% if result.suggestions %}
-            <h5>If they became unavailable, ranked substitutes:</h5>
-            <table class="table table-bordered">
-                <thead>
-                    <tr>
-                        <th>Teacher</th>
-                        <th>Current Load</th>
-                        <th>Projected Load</th>
-                        <th>Status</th>
-                        <th>Why</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for s in result.suggestions %}
-                    <tr class="{% if s.over_cap %}table-warning{% else %}table-success{% endif %}">
-                        <td>{{ s.teacher.name }}</td>
-                        <td>{{ s.current_workload }} hrs/week</td>
-                        <td>{{ s.projected_workload }} hrs/week</td>
-                        <td>
-                            {% if s.over_cap %}
-                                <span class="text-danger">Over cap</span>
-                            {% else %}
-                                <span class="text-success">Recommended</span>
-                            {% endif %}
-                        </td>
-                        <td>{{ s.reason }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
             {% else %}
-            <div class="alert alert-warning">
-                No alternative qualified teacher exists for this subject. Add another
-                teacher to its "Qualified Teachers" list in the <a href="/admin/">admin panel</a>
-                to enable substitution.
-            </div>
+            <div class="flash-item flash-error"><i class="bi bi-exclamation-triangle-fill"></i> No teacher currently assigned to this subject.</div>
             {% endif %}
-            {% endif %}
-        {% endif %}
+        </div>
     </div>
-</body>
-</html>
+
+    <!-- Unavailable alternatives note -->
+    {% if result.unavailable_alternatives %}
+    <div class="flash-item flash-warning" style="margin-bottom:16px;">
+        <i class="bi bi-exclamation-triangle-fill"></i>
+        Also qualified but currently <strong>unavailable</strong> (excluded below):
+        {% for t in result.unavailable_alternatives %}{{ t.name }}{% if not forloop.last %}, {% endif %}{% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Suggestions table -->
+    {% if result.suggestions %}
+    <div class="card">
+        <div class="card-header">
+            <i class="bi bi-list-stars" style="color:var(--accent);"></i>
+            <h3>Ranked Substitutes</h3>
+            <span style="margin-left:auto;font-size:.78rem;color:var(--muted);">Sorted by projected workload (least loaded first)</span>
+        </div>
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Rank</th><th>Teacher</th>
+                    <th>Current Load</th><th>Projected Load</th>
+                    <th>Status</th><th>Why</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for s in result.suggestions %}
+                <tr>
+                    <td>
+                        {% if forloop.counter == 1 and not s.over_cap %}
+                        <span class="badge badge-yellow">⭐ Best</span>
+                        {% else %}
+                        <span style="color:var(--muted);">#{{ forloop.counter }}</span>
+                        {% endif %}
+                    </td>
+                    <td><strong>{{ s.teacher.name }}</strong></td>
+                    <td>{{ s.current_workload }} h/wk</td>
+                    <td>{{ s.projected_workload }} h/wk</td>
+                    <td>
+                        {% if s.over_cap %}
+                        <span class="badge badge-red"><i class="bi bi-exclamation-triangle"></i> Over Cap</span>
+                        {% else %}
+                        <span class="badge badge-green"><i class="bi bi-check-circle"></i> Recommended</span>
+                        {% endif %}
+                    </td>
+                    <td style="color:var(--muted);font-size:.82rem;">{{ s.reason }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% else %}
+    <div class="flash-item flash-warning">
+        <i class="bi bi-exclamation-triangle-fill"></i>
+        No alternative qualified teacher exists for this subject.
+        Go to <a href="{% url 'data_subjects' %}" style="color:var(--accent3);">Subjects</a>
+        and add more qualified teachers to enable substitution.
+    </div>
+    {% endif %}
+    {% endif %}
+{% endif %}
+
+{% if not result and not selected_subject_id %}
+<div class="empty-state">
+    <i class="bi bi-person-gear"></i>
+    <p>Select a subject above to see who can replace its teacher.</p>
+</div>
+{% endif %}
+{% endblock %}

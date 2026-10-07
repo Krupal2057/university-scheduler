@@ -1,0 +1,34 @@
+{% extends "scheduler/base.html" %}
+{% block title %}Edit Room — University Scheduler{% endblock %}
+{% block page_title %}Edit Room{% endblock %}
+{% block page_sub %}{{ obj.name }}{% endblock %}
+{% block nav_rooms %}active{% endblock %}
+
+{% block content %}
+<div style="max-width:480px;">
+<div class="card">
+    <div class="card-header">
+        <i class="bi bi-pencil-square" style="color:var(--accent);"></i>
+        <h3>Edit — {{ obj.name }}</h3>
+        <a href="{% url 'data_rooms' %}" class="btn btn-secondary btn-sm" style="margin-left:auto;"><i class="bi bi-arrow-left"></i> Back</a>
+    </div>
+    <div class="card-body">
+        <form method="post">
+            {% csrf_token %}
+            {% for field in form %}
+            <div class="form-group">
+                <label class="form-label">{{ field.label }}</label>
+                {{ field }}
+                {% if field.errors %}<div class="form-error">{{ field.errors|join:", " }}</div>{% endif %}
+            </div>
+            {% endfor %}
+            <hr class="divider">
+            <div style="display:flex;gap:10px;">
+                <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Save Changes</button>
+                <a href="{% url 'data_rooms' %}" class="btn btn-secondary">Cancel</a>
+            </div>
+        </form>
+    </div>
+</div>
+</div>
+{% endblock %}

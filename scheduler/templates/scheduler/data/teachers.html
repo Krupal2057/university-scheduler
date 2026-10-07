@@ -1,0 +1,110 @@
+{% extends "scheduler/base.html" %}
+{% block title %}Teachers — University Scheduler{% endblock %}
+{% block page_title %}Teachers{% endblock %}
+{% block page_sub %}Manage faculty members{% endblock %}
+{% block nav_teachers %}active{% endblock %}
+
+{% block topbar_actions %}
+{% if request.session.site_admin %}
+<button class="btn btn-primary btn-sm" onclick="togglePanel()">
+    <i class="bi bi-plus-lg"></i> Add Teacher
+</button>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+{% if request.session.site_admin %}
+<div id="addPanel" style="display:none;margin-bottom:24px;">
+<div class="card">
+    <div class="card-header">
+        <i class="bi bi-person-badge" style="color:var(--accent);"></i>
+        <h3>New Teacher</h3>
+        <button onclick="togglePanel()" style="margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:1.1rem;"><i class="bi bi-x-lg"></i></button>
+    </div>
+    <div class="card-body">
+        <form method="post">
+            {% csrf_token %}
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;">
+                {% for field in form %}
+                {% if field.widget_type == 'checkbox' %}
+                <div class="form-group" style="align-self:end;">
+                    <div class="form-check">
+                        {{ field }} <label class="form-check-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+                    </div>
+                </div>
+                {% else %}
+                <div class="form-group">
+                    <label class="form-label">{{ field.label }}</label>
+                    {{ field }}
+                    {% if field.errors %}<div class="form-error">{{ field.errors|join:", " }}</div>{% endif %}
+                </div>
+                {% endif %}
+                {% endfor %}
+            </div>
+            <div style="margin-top:16px;display:flex;gap:10px;">
+                <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Save Teacher</button>
+                <button type="button" class="btn btn-secondary" onclick="togglePanel()">Cancel</button>
+            </div>
+        </form>
+    </div>
+</div>
+</div>
+{% endif %}
+
+<div class="card">
+    <div class="card-header">
+        <i class="bi bi-person-badge" style="color:var(--accent);"></i>
+        <h3>All Teachers <span style="font-weight:400;color:var(--muted);">({{ objects.count }})</span></h3>
+    </div>
+    {% if objects %}
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Name</th><th>Email</th><th>Max Hrs/Week</th><th>Available</th>
+                {% if request.session.site_admin %}<th>Actions</th>{% endif %}
+            </tr>
+        </thead>
+        <tbody>
+        {% for obj in objects %}
+            <tr>
+                <td><strong>{{ obj.name }}</strong></td>
+                <td style="color:var(--muted);">{{ obj.email }}</td>
+                <td>{{ obj.max_hours_per_week }}h</td>
+                <td>
+                    {% if obj.is_available %}
+                    <span class="badge badge-green"><i class="bi bi-check-circle"></i> Available</span>
+                    {% else %}
+                    <span class="badge badge-red"><i class="bi bi-x-circle"></i> Unavailable</span>
+                    {% endif %}
+                </td>
+                {% if request.session.site_admin %}
+                <td>
+                    <div style="display:flex;gap:6px;">
+                        <a href="{% url 'data_teacher_edit' obj.pk %}" class="btn btn-secondary btn-sm btn-icon"><i class="bi bi-pencil"></i></a>
+                        <form method="post" action="{% url 'data_teacher_delete' obj.pk %}" onsubmit="return confirm('Delete {{ obj.name }}?');">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-danger btn-sm btn-icon"><i class="bi bi-trash"></i></button>
+                        </form>
+                    </div>
+                </td>
+                {% endif %}
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state">
+        <i class="bi bi-person-badge"></i>
+        <p>No teachers yet.{% if request.session.site_admin %} Add one above.{% else %} Log in as admin to add teachers.{% endif %}</p>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+function togglePanel() {
+    const p = document.getElementById('addPanel');
+    p.style.display = p.style.display === 'none' ? 'block' : 'none';
+}
+{% if form.errors %}togglePanel();{% endif %}
+</script>
+{% endblock %}

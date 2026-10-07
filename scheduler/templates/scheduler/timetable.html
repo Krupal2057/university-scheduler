@@ -1,443 +1,338 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Generated Timetable — University Scheduler</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style>
-        :root {
-            --bg: #0f1117;
-            --surface: #1a1d2e;
-            --surface2: #22263a;
-            --border: #2e3250;
-            --accent: #7c6fcd;
-            --accent2: #5a78f0;
-            --text: #e2e4f0;
-            --muted: #7b7f9e;
-            --warning: #f59e0b;
-            --danger: #ef4444;
-        }
-        * { box-sizing: border-box; }
-        body {
-            background: var(--bg);
-            color: var(--text);
-            font-family: 'Inter', sans-serif;
-            min-height: 100vh;
-        }
-        .top-bar {
-            background: var(--surface);
-            border-bottom: 1px solid var(--border);
-            padding: 14px 28px;
-            display: flex;
-            align-items: center;
-            gap: 18px;
-            position: sticky;
-            top: 0;
-            z-index: 100;
-        }
-        .top-bar .back-link {
-            color: var(--muted);
-            text-decoration: none;
-            font-size: .85rem;
-            transition: color .2s;
-        }
-        .top-bar .back-link:hover { color: var(--text); }
-        .top-bar h1 {
-            font-size: 1.25rem;
-            font-weight: 700;
-            margin: 0;
-            background: linear-gradient(135deg, #a78bf6, #5a78f0);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-        .badge-stat {
-            margin-left: auto;
-            background: var(--surface2);
-            border: 1px solid var(--border);
-            border-radius: 20px;
-            padding: 5px 14px;
-            font-size: .8rem;
-            color: var(--muted);
-        }
-        .badge-stat strong { color: var(--accent); }
-        .main { padding: 28px; max-width: 1600px; margin: 0 auto; }
-        .alert-warn {
-            background: rgba(245,158,11,.1);
-            border: 1px solid rgba(245,158,11,.35);
-            border-radius: 10px;
-            padding: 14px 18px;
-            margin-bottom: 22px;
-            color: #fcd34d;
-            font-size: .875rem;
-        }
-        .alert-warn strong { color: var(--warning); }
-        .alert-warn ul { margin: 6px 0 0 0; padding-left: 18px; }
-        .alert-warn li { margin-top: 4px; }
-        .view-tabs {
-            display: flex;
-            gap: 6px;
-            margin-bottom: 28px;
-            border-bottom: 2px solid var(--border);
-        }
-        .view-tab {
-            padding: 9px 20px;
-            border: none;
-            background: transparent;
-            color: var(--muted);
-            font-family: inherit;
-            font-size: .875rem;
-            font-weight: 500;
-            cursor: pointer;
-            border-bottom: 2px solid transparent;
-            margin-bottom: -2px;
-            border-radius: 6px 6px 0 0;
-            transition: color .2s, border-color .2s;
-        }
-        .view-tab:hover { color: var(--text); }
-        .view-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
-        .view-pane { display: none; }
-        .view-pane.active { display: block; }
-        .division-block {
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 14px;
-            padding: 22px;
-            margin-bottom: 36px;
-            overflow-x: auto;
-        }
-        .division-heading {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            margin-bottom: 16px;
-        }
-        .division-badge {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 42px;
-            height: 42px;
-            border-radius: 10px;
-            background: linear-gradient(135deg, var(--accent), var(--accent2));
-            font-weight: 700;
-            font-size: 1rem;
-            color: #fff;
-            flex-shrink: 0;
-        }
-        .division-name { font-size: 1.15rem; font-weight: 700; }
-        .tt-table {
-            width: 100%;
-            border-collapse: separate;
-            border-spacing: 0;
-            font-size: .82rem;
-            min-width: 500px;
-        }
-        .tt-table th, .tt-table td {
-            padding: 10px 12px;
-            text-align: center;
-            vertical-align: middle;
-            border-bottom: 1px solid var(--border);
-            border-right: 1px solid var(--border);
-        }
-        .tt-table thead th {
-            background: var(--surface2);
-            color: var(--muted);
-            font-weight: 600;
-            font-size: .78rem;
-            letter-spacing: .04em;
-            text-transform: uppercase;
-            border-top: 1px solid var(--border);
-        }
-        .tt-table thead th:first-child { border-left: 1px solid var(--border); border-radius: 10px 0 0 0; }
-        .tt-table thead th:last-child  { border-radius: 0 10px 0 0; }
-        .tt-table td.time-cell {
-            background: var(--surface2);
-            color: var(--accent);
-            font-weight: 600;
-            font-size: .78rem;
-            white-space: nowrap;
-            text-align: left;
-            border-left: 1px solid var(--border);
-            min-width: 120px;
-        }
-        .tt-table tr:last-child td { border-bottom: 1px solid var(--border); }
-        .tt-table tr:last-child td.time-cell { border-radius: 0 0 0 10px; }
-        .tt-table tr:last-child td:last-child { border-radius: 0 0 10px 0; }
-        .session-cell {
-            background: rgba(124,111,205,.12);
-            border-radius: 8px;
-            padding: 8px 10px;
-            border: 1px solid rgba(124,111,205,.3);
-            text-align: left;
-            transition: transform .15s, box-shadow .15s;
-        }
-        .session-cell:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 14px rgba(0,0,0,.3);
-        }
-        .session-cell.lab-cell {
-            background: rgba(6, 182, 212, 0.12);
-            border: 1px solid rgba(6, 182, 212, 0.45);
-            box-shadow: 0 0 10px rgba(6, 182, 212, 0.12);
-        }
-        .badge-lab {
-            display: inline-block;
-            padding: 2px 7px;
-            background: rgba(6, 182, 212, 0.22);
-            border: 1px solid rgba(6, 182, 212, 0.55);
-            border-radius: 4px;
-            font-size: .68rem;
-            font-weight: 700;
-            color: #38bdf8;
-            letter-spacing: .02em;
-        }
-        .badge-lec {
-            display: inline-block;
-            padding: 2px 6px;
-            background: rgba(124, 111, 205, 0.18);
-            border: 1px solid rgba(124, 111, 205, 0.4);
-            border-radius: 4px;
-            font-size: .68rem;
-            font-weight: 600;
-            color: #a78bf6;
-        }
-        .badge-room {
-            display: inline-block;
-            font-size: .72rem;
-            color: #94a3b8;
-            background: rgba(255, 255, 255, 0.05);
-            padding: 2px 6px;
-            border-radius: 4px;
-            margin-top: 5px;
-            border: 1px solid rgba(255, 255, 255, 0.08);
-        }
-        .session-cell .subj-code { font-weight: 700; color: #a78bf6; font-size: .76rem; }
-        .session-cell.lab-cell .subj-code { color: #38bdf8; }
-        .session-cell .subj-name  { color: var(--text); font-weight: 500; font-size: .8rem; line-height: 1.3; margin: 3px 0; }
-        .session-cell .teacher-name { color: var(--muted); font-size: .72rem; }
-        .empty-cell { color: var(--border); font-size: .75rem; opacity: .5; }
-        .card-surface {
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 14px;
-            padding: 22px;
-            overflow-x: auto;
-        }
-        .list-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: .85rem; }
-        .list-table th {
-            background: var(--surface2);
-            color: var(--muted);
-            font-size: .78rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: .04em;
-            padding: 10px 16px;
-            border-top: 1px solid var(--border);
-            border-bottom: 1px solid var(--border);
-            border-right: 1px solid var(--border);
-        }
-        .list-table th:first-child { border-left: 1px solid var(--border); border-radius: 10px 0 0 0; }
-        .list-table th:last-child  { border-radius: 0 10px 0 0; }
-        .list-table td {
-            padding: 11px 16px;
-            border-bottom: 1px solid var(--border);
-            border-right: 1px solid var(--border);
-            vertical-align: middle;
-        }
-        .list-table td:first-child { border-left: 1px solid var(--border); }
-        .list-table tr:last-child td:first-child { border-radius: 0 0 0 10px; }
-        .list-table tr:last-child td:last-child   { border-radius: 0 0 10px 0; }
-        .list-table tbody tr:hover { background: rgba(255,255,255,.02); }
-        .div-tag {
-            display: inline-block;
-            padding: 3px 10px;
-            background: rgba(124,111,205,.18);
-            border: 1px solid rgba(124,111,205,.4);
-            border-radius: 20px;
-            font-size: .75rem;
-            font-weight: 600;
-            color: #a78bf6;
-        }
-        .slot-tag {
-            display: inline-block;
-            padding: 3px 10px;
-            background: rgba(90,120,240,.15);
-            border: 1px solid rgba(90,120,240,.35);
-            border-radius: 20px;
-            font-size: .75rem;
-            font-weight: 600;
-            color: #7ea3ff;
-        }
-        .no-slot { color: var(--danger); font-size: .8rem; }
-        .empty-state { text-align: center; padding: 60px 20px; color: var(--muted); }
-    </style>
-</head>
-<body>
+{% extends "scheduler/base.html" %}
+{% block title %}Generated Timetable — University Scheduler{% endblock %}
+{% block page_title %}Generated Timetable{% endblock %}
+{% block page_sub %}{{ num_sessions }} sessions · {{ num_labs }} lab blocks · {{ num_lectures }} lectures{% endblock %}
+{% block nav_timetable %}active{% endblock %}
 
-<div class="top-bar">
-    <a href="{% url 'home' %}" class="back-link">&#8592; Back</a>
-    <h1>&#128197; Generated Timetable</h1>
-    <div class="badge-stat">
-        <strong>{{ num_sessions }}</strong> total slots &nbsp;&middot;&nbsp;
-        <strong style="color:#38bdf8">&#128300; {{ num_labs }}</strong> lab blocks (2-hr) &nbsp;&middot;&nbsp;
-        <strong>{{ num_lectures }}</strong> lectures &nbsp;&middot;&nbsp;
-        {% if timetable_violations %}
-            <span style="color:var(--danger)">&#9888; {{ timetable_violations|length }} Clashes</span>
-        {% else %}
-            <span style="color:#34d399">&#10003; 0 Clashes Verified</span>
-        {% endif %}
-    </div>
+{% block topbar_actions %}
+{% if timetable_violations %}
+<span class="badge badge-red"><i class="bi bi-exclamation-triangle"></i> {{ timetable_violations|length }} Clash(es)</span>
+{% else %}
+<span class="badge badge-green"><i class="bi bi-check-circle"></i> 0 Clashes Verified</span>
+{% endif %}
+{% endblock %}
+
+{% block extra_head %}
+<style>
+    /* Timetable-specific styles on top of base.html design tokens */
+    .view-tabs {
+        display: flex; gap: 6px; margin-bottom: 28px;
+        border-bottom: 2px solid var(--border);
+    }
+    .view-tab {
+        padding: 9px 20px; border: none; background: transparent;
+        color: var(--muted); font-family: inherit; font-size: .875rem;
+        font-weight: 500; cursor: pointer;
+        border-bottom: 2px solid transparent; margin-bottom: -2px;
+        border-radius: 6px 6px 0 0;
+        transition: color .2s, border-color .2s;
+    }
+    .view-tab:hover { color: var(--text); }
+    .view-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .view-pane { display: none; }
+    .view-pane.active { display: block; }
+    .division-block {
+        background: var(--surface); border: 1px solid var(--border);
+        border-radius: 14px; padding: 22px; margin-bottom: 36px; overflow-x: auto;
+    }
+    .division-heading { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+    .division-badge {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 42px; height: 42px; border-radius: 10px;
+        background: linear-gradient(135deg, var(--accent), var(--accent2));
+        font-weight: 700; font-size: 1rem; color: #fff; flex-shrink: 0;
+    }
+    .division-name { font-size: 1.15rem; font-weight: 700; }
+    .tt-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: .82rem; min-width: 500px; }
+    .tt-table th, .tt-table td {
+        padding: 10px 12px; text-align: center; vertical-align: middle;
+        border-bottom: 1px solid var(--border); border-right: 1px solid var(--border);
+    }
+    .tt-table thead th {
+        background: var(--surface2); color: var(--muted); font-weight: 600;
+        font-size: .78rem; letter-spacing: .04em; text-transform: uppercase;
+        border-top: 1px solid var(--border);
+    }
+    .tt-table thead th:first-child { border-left: 1px solid var(--border); border-radius: 10px 0 0 0; }
+    .tt-table thead th:last-child  { border-radius: 0 10px 0 0; }
+    .tt-table td.time-cell {
+        background: var(--surface2); color: var(--accent); font-weight: 600;
+        font-size: .78rem; white-space: nowrap; text-align: left;
+        border-left: 1px solid var(--border); min-width: 120px;
+    }
+    .tt-table tr:last-child td { border-bottom: 1px solid var(--border); }
+    .tt-table tr:last-child td.time-cell { border-radius: 0 0 0 10px; }
+    .tt-table tr:last-child td:last-child { border-radius: 0 0 10px 0; }
+    .session-cell {
+        background: rgba(124,111,205,.12); border-radius: 8px; padding: 8px 10px;
+        border: 1px solid rgba(124,111,205,.3); text-align: left;
+        transition: transform .15s, box-shadow .15s;
+    }
+    .session-cell:hover { transform: translateY(-2px); box-shadow: 0 4px 14px rgba(0,0,0,.3); }
+    .session-cell.lab-cell {
+        background: rgba(6,182,212,.12); border: 1px solid rgba(6,182,212,.45);
+        box-shadow: 0 0 10px rgba(6,182,212,.12);
+    }
+    .badge-lab {
+        display: inline-block; padding: 2px 7px;
+        background: rgba(6,182,212,.22); border: 1px solid rgba(6,182,212,.55);
+        border-radius: 4px; font-size: .68rem; font-weight: 700;
+        color: #38bdf8; letter-spacing: .02em;
+    }
+    .badge-lec {
+        display: inline-block; padding: 2px 6px;
+        background: rgba(124,111,205,.18); border: 1px solid rgba(124,111,205,.4);
+        border-radius: 4px; font-size: .68rem; font-weight: 600; color: #a78bf6;
+    }
+    .badge-room {
+        display: inline-block; font-size: .72rem; color: #94a3b8;
+        background: rgba(255,255,255,.05); padding: 2px 6px; border-radius: 4px;
+        margin-top: 5px; border: 1px solid rgba(255,255,255,.08);
+    }
+    .session-cell .subj-code { font-weight: 700; color: #a78bf6; font-size: .76rem; }
+    .session-cell.lab-cell .subj-code { color: #38bdf8; }
+    .session-cell .subj-name  { color: var(--text); font-weight: 500; font-size: .8rem; line-height: 1.3; margin: 3px 0; }
+    .session-cell .teacher-name { color: var(--muted); font-size: .72rem; }
+    .empty-cell { color: var(--border); font-size: .75rem; opacity: .5; }
+    .card-surface {
+        background: var(--surface); border: 1px solid var(--border);
+        border-radius: 14px; padding: 22px; overflow-x: auto;
+    }
+    .list-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: .85rem; }
+    .list-table th {
+        background: var(--surface2); color: var(--muted); font-size: .78rem;
+        font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+        padding: 10px 16px; border-top: 1px solid var(--border);
+        border-bottom: 1px solid var(--border); border-right: 1px solid var(--border);
+    }
+    .list-table th:first-child { border-left: 1px solid var(--border); border-radius: 10px 0 0 0; }
+    .list-table th:last-child  { border-radius: 0 10px 0 0; }
+    .list-table td {
+        padding: 11px 16px; border-bottom: 1px solid var(--border);
+        border-right: 1px solid var(--border); vertical-align: middle;
+    }
+    .list-table td:first-child { border-left: 1px solid var(--border); }
+    .list-table tr:last-child td:first-child { border-radius: 0 0 0 10px; }
+    .list-table tr:last-child td:last-child   { border-radius: 0 0 10px 0; }
+    .list-table tbody tr:hover { background: rgba(255,255,255,.02); }
+    .div-tag {
+        display: inline-block; padding: 3px 10px;
+        background: rgba(124,111,205,.18); border: 1px solid rgba(124,111,205,.4);
+        border-radius: 20px; font-size: .75rem; font-weight: 600; color: #a78bf6;
+    }
+    .slot-tag {
+        display: inline-block; padding: 3px 10px;
+        background: rgba(90,120,240,.15); border: 1px solid rgba(90,120,240,.35);
+        border-radius: 20px; font-size: .75rem; font-weight: 600; color: #7ea3ff;
+    }
+    .no-slot { color: var(--danger); font-size: .8rem; }
+    /* Preference satisfaction panel */
+    .sat-panel {
+        background: var(--surface); border: 1px solid var(--border);
+        border-radius: 14px; padding: 22px; margin-bottom: 32px;
+    }
+    .sat-panel h2 { font-size: 1rem; font-weight: 700; margin: 0 0 16px 0; color: var(--text); }
+    .sat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px,1fr)); gap: 12px; }
+    .sat-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+    .sat-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+    .sat-div-name { font-weight: 700; font-size: .9rem; }
+    .sat-priority {
+        font-size: .72rem; color: var(--muted);
+        background: rgba(255,255,255,.05); border: 1px solid var(--border);
+        border-radius: 20px; padding: 2px 8px;
+    }
+    .sat-pref-row { font-size: .75rem; color: var(--muted); margin-bottom: 4px; }
+    .sat-pref-row span { color: var(--text); font-weight: 500; }
+    .sat-bar-wrap { background: rgba(255,255,255,.06); border-radius: 20px; height: 8px; margin-top: 10px; overflow: hidden; }
+    .sat-bar { height: 100%; border-radius: 20px; transition: width .4s ease; }
+    .sat-pct { font-size: .8rem; font-weight: 700; margin-top: 5px; text-align: right; }
+    .pref-badge {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 4px 12px; border-radius: 20px; font-size: .74rem; font-weight: 600; border: 1px solid;
+    }
+    .pref-badge.high   { color: #34d399; border-color: rgba(52,211,153,.4); background: rgba(52,211,153,.08); }
+    .pref-badge.medium { color: var(--warning); border-color: rgba(245,158,11,.4); background: rgba(245,158,11,.08); }
+    .pref-badge.low    { color: var(--danger); border-color: rgba(239,68,68,.4); background: rgba(239,68,68,.08); }
+</style>
+{% endblock %}
+
+{% block content %}
+
+{% if warnings %}
+<div style="background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.35);border-radius:10px;padding:14px 18px;margin-bottom:22px;color:#fcd34d;font-size:.875rem;">
+    <strong>⚠ Notes</strong>
+    <ul style="margin:6px 0 0;padding-left:18px;">
+        {% for w in warnings %}<li style="margin-top:4px;">{{ w }}</li>{% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+{% if not rows %}
+<div class="empty-state">
+    <i class="bi bi-calendar3" style="font-size:3rem;display:block;margin-bottom:12px;opacity:.4;"></i>
+    <p>No sessions to schedule yet.</p>
+    <p style="margin-top:8px;font-size:.85rem;">Add Divisions, Subjects (with a qualified teacher), and Time Slots first.</p>
+    <a href="{% url 'data_divisions' %}" class="btn btn-primary" style="margin-top:16px;">
+        <i class="bi bi-people"></i> Go to Divisions
+    </a>
 </div>
 
-<div class="main">
+{% else %}
 
-    {% if warnings %}
-    <div class="alert-warn">
-        <strong>&#9888; Notes</strong>
-        <ul>
-            {% for w in warnings %}<li>{{ w }}</li>{% endfor %}
-        </ul>
-    </div>
-    {% endif %}
-
-    {% if not rows %}
-    <div class="empty-state">
-        <p style="font-size:3rem">&#128197;</p>
-        <p>No sessions to schedule yet.<br>
-           Add Divisions, Subjects (with a qualified teacher), and Time Slots in the
-           <a href="/admin/" style="color:var(--accent)">admin panel</a> first.
-        </p>
-    </div>
-
-    {% else %}
-
-    <div class="view-tabs">
-        <button class="view-tab active" onclick="switchTab(event,'grid-view')">&#128194; Weekly Grid (per Division)</button>
-        <button class="view-tab"        onclick="switchTab(event,'list-view')">&#128203; Session List</button>
-    </div>
-
-    <!-- ====== GRID VIEW ====== -->
-    <div id="grid-view" class="view-pane active">
-        {% for div in grid_by_division %}
-        <div class="division-block">
-            <div class="division-heading">
-                <div class="division-badge">{{ div.division|slice:":2" }}</div>
-                <div class="division-name">Division &mdash; {{ div.division }}</div>
+<!-- Preference Satisfaction Summary -->
+{% if satisfaction_list %}
+<div class="sat-panel">
+    <h2>🎯 Division Preference Satisfaction</h2>
+    <div class="sat-grid">
+        {% for sat in satisfaction_list %}
+        {% with pct=sat.pct %}
+        <div class="sat-card">
+            <div class="sat-card-header">
+                <span class="sat-div-name">{{ sat.division.name }}</span>
+                <span class="sat-priority">Priority {{ sat.priority }}</span>
             </div>
-            <table class="tt-table">
-                <thead>
-                    <tr>
-                        <th>Time Slot</th>
-                        {% for day in div.days %}<th>{{ day }}</th>{% endfor %}
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for slot_label, cells in div.grid_rows %}
-                    <tr>
-                        <td class="time-cell">&#9200; {{ slot_label }}</td>
-                        {% for cell in cells %}
-                        <td>
-                            {% if cell %}
-                            <div class="session-cell {% if cell.is_lab %}lab-cell{% endif %}">
-                                <div style="display:flex; justify-content:space-between; align-items:center;">
-                                    <span class="subj-code">{{ cell.subject_code }}</span>
-                                    {% if cell.is_lab %}
-                                        <span class="badge-lab">&#128300; LAB ({{ cell.part_index }}/{{ cell.duration_slots }})</span>
-                                    {% else %}
-                                        <span class="badge-lec">&#128214; LEC</span>
-                                    {% endif %}
-                                </div>
-                                <div class="subj-name">{{ cell.subject_name }}</div>
-                                <div class="teacher-name">&#128100; {{ cell.teacher }}</div>
-                                {% if cell.room %}
-                                <div class="badge-room">
-                                    {% if cell.is_lab %}&#127963; {{ cell.room.name }} (LAB){% else %}&#127979; Room {{ cell.room.name }}{% endif %}
-                                </div>
-                                {% endif %}
-                            </div>
-                            {% else %}
-                            <span class="empty-cell">&mdash;</span>
-                            {% endif %}
-                        </td>
-                        {% endfor %}
-                    </tr>
-                    {% endfor %}
-                </tbody>
-
-            </table>
+            <div class="sat-pref-row">Shift: <span>{{ sat.preferred_shift }}</span></div>
+            <div class="sat-pref-row">Labs:  <span>{{ sat.preferred_lab_timing }}</span></div>
+            <div class="sat-pref-row">Light day: <span>{{ sat.preferred_light_day }}</span></div>
+            <div class="sat-bar-wrap">
+                <div class="sat-bar" style="width:{{ pct }}%;background:{% if pct >= 80 %}#34d399{% elif pct >= 50 %}#f59e0b{% else %}#ef4444{% endif %};"></div>
+            </div>
+            <div class="sat-pct" style="color:{% if pct >= 80 %}#34d399{% elif pct >= 50 %}#f59e0b{% else %}#ef4444{% endif %};">
+                {{ pct }}% preference matched
+                &nbsp;·&nbsp;
+                <span style="color:var(--muted);font-weight:400;">{{ sat.matched }}/{{ sat.total }} sessions</span>
+            </div>
         </div>
+        {% endwith %}
         {% endfor %}
     </div>
+</div>
+{% endif %}
 
-    <!-- ====== LIST VIEW ====== -->
-    <div id="list-view" class="view-pane">
-        <div class="card-surface">
-            <table class="list-table">
-                <thead>
-                    <tr>
-                        <th>#</th>
-                        <th>Division</th>
-                        <th>Type</th>
-                        <th>Subject</th>
-                        <th>Teacher</th>
-                        <th>Room</th>
-                        <th>Day</th>
-                        <th>Time Slot</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for row in rows %}
-                    <tr>
-                        <td style="color:var(--muted);font-size:.8rem">{{ forloop.counter }}</td>
-                        <td><span class="div-tag">{{ row.division }}</span></td>
-                        <td>
-                            {% if row.is_lab %}
-                                <span class="badge-lab">&#128300; LAB (Part {{ row.part_index }}/{{ row.duration_slots }})</span>
-                            {% else %}
-                                <span class="badge-lec">&#128214; LECTURE</span>
-                            {% endif %}
-                        </td>
-                        <td>
-                            <strong>{{ row.subject.name }}</strong><br>
-                            <span style="color:var(--muted);font-size:.78rem">{{ row.subject.code }}</span>
-                        </td>
-                        <td style="color:var(--muted)">&#128100; {{ row.teacher }}</td>
-                        <td>
-                            {% if row.room %}
-                                <span class="badge-room">
-                                    {% if row.is_lab %}&#127963; {{ row.room.name }} (LAB){% else %}&#127979; Room {{ row.room.name }}{% endif %}
-                                </span>
-                            {% else %}
-                                <span class="no-slot">&mdash;</span>
-                            {% endif %}
-                        </td>
-                        <td>
-                            {% if row.time_slot %}
-                                {{ row.time_slot.get_day_display }}
-                            {% else %}
-                                <span class="no-slot">&mdash;</span>
-                            {% endif %}
-                        </td>
-                        <td>
-                            {% if row.time_slot %}
-                                <span class="slot-tag">{{ row.time_slot }}</span>
-                            {% else %}
-                                <span class="no-slot">No slot available</span>
-                            {% endif %}
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </div>
-
-
-    {% endif %}
+<!-- Tabs -->
+<div class="view-tabs">
+    <button class="view-tab active" onclick="switchTab(event,'grid-view')">📂 Weekly Grid (per Division)</button>
+    <button class="view-tab"        onclick="switchTab(event,'list-view')">📋 Session List</button>
 </div>
 
+<!-- Grid view -->
+<div id="grid-view" class="view-pane active">
+    {% for div in grid_by_division %}
+    <div class="division-block">
+        <div class="division-heading">
+            <div class="division-badge">{{ div.division|slice:":2" }}</div>
+            <div class="division-name">Division — {{ div.division }}</div>
+            {% if div.satisfaction %}
+            {% with sat=div.satisfaction pct=div.satisfaction.pct %}
+            <span class="pref-badge {% if pct >= 80 %}high{% elif pct >= 50 %}medium{% else %}low{% endif %}">
+                {% if pct >= 80 %}★{% elif pct >= 50 %}●{% else %}○{% endif %}
+                {{ pct }}% pref match
+            </span>
+            {% endwith %}
+            {% endif %}
+        </div>
+        <table class="tt-table">
+            <thead>
+                <tr>
+                    <th>Time Slot</th>
+                    {% for day in div.days %}<th>{{ day }}</th>{% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for slot_label, cells in div.grid_rows %}
+                <tr>
+                    <td class="time-cell">⏰ {{ slot_label }}</td>
+                    {% for cell in cells %}
+                    <td>
+                        {% if cell %}
+                        <div class="session-cell {% if cell.is_lab %}lab-cell{% endif %}">
+                            <div style="display:flex;justify-content:space-between;align-items:center;">
+                                <span class="subj-code">{{ cell.subject_code }}</span>
+                                {% if cell.is_lab %}
+                                    <span class="badge-lab">🔬 LAB ({{ cell.part_index }}/{{ cell.duration_slots }})</span>
+                                {% else %}
+                                    <span class="badge-lec">📖 LEC</span>
+                                {% endif %}
+                            </div>
+                            <div class="subj-name">{{ cell.subject_name }}</div>
+                            <div class="teacher-name">👤 {{ cell.teacher }}</div>
+                            {% if cell.room %}
+                            <div class="badge-room">
+                                {% if cell.is_lab %}🏭 {{ cell.room.name }} (LAB){% else %}🏫 Room {{ cell.room.name }}{% endif %}
+                            </div>
+                            {% endif %}
+                        </div>
+                        {% else %}
+                        <span class="empty-cell">&mdash;</span>
+                        {% endif %}
+                    </td>
+                    {% endfor %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- List view -->
+<div id="list-view" class="view-pane">
+    <div class="card-surface">
+        <table class="list-table">
+            <thead>
+                <tr>
+                    <th>#</th><th>Division</th><th>Type</th><th>Subject</th>
+                    <th>Teacher</th><th>Room</th><th>Day</th><th>Time Slot</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in rows %}
+                <tr>
+                    <td style="color:var(--muted);font-size:.8rem;">{{ forloop.counter }}</td>
+                    <td><span class="div-tag">{{ row.division }}</span></td>
+                    <td>
+                        {% if row.is_lab %}
+                            <span class="badge-lab">🔬 LAB (Part {{ row.part_index }}/{{ row.duration_slots }})</span>
+                        {% else %}
+                            <span class="badge-lec">📖 LECTURE</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <strong>{{ row.subject.name }}</strong><br>
+                        <span style="color:var(--muted);font-size:.78rem;">{{ row.subject.code }}</span>
+                    </td>
+                    <td style="color:var(--muted);">👤 {{ row.teacher }}</td>
+                    <td>
+                        {% if row.room %}
+                            <span class="badge-room">
+                                {% if row.is_lab %}🏭 {{ row.room.name }} (LAB){% else %}🏫 {{ row.room.name }}{% endif %}
+                            </span>
+                        {% else %}
+                            <span class="no-slot">&mdash;</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if row.time_slot %}{{ row.time_slot.get_day_display }}
+                        {% else %}<span class="no-slot">&mdash;</span>{% endif %}
+                    </td>
+                    <td>
+                        {% if row.time_slot %}
+                            <span class="slot-tag">{{ row.time_slot }}</span>
+                        {% else %}
+                            <span class="no-slot">No slot available</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
 <script>
 function switchTab(e, paneId) {
     document.querySelectorAll('.view-tab').forEach(t => t.classList.remove('active'));
@@ -446,6 +341,4 @@ function switchTab(e, paneId) {
     document.getElementById(paneId).classList.add('active');
 }
 </script>
-</body>
-</html>
-
+{% endblock %}

@@ -284,26 +284,77 @@ def _make_interleaved_slots():
     return interleaved
 
 
+def _preference_slot_penalty(slot, day, slot_idx, num_day_slots, div):
+    """
+    Returns a non-negative penalty for a (slot, day) being assigned to `div`
+    based on the division's stated preferences.  Lower penalty = better match.
+
+    Penalty components (all additive):
+      - Shift preference: MORNING prefers early slot indices, AFTERNOON prefers late.
+      - Lab timing: handled separately at the call site via preferred_lab_timing.
+      - Light day: sessions on the preferred light day are penalised (prefer to
+        put sessions on other days, keeping the light day freer).
+
+    Returns (penalty, is_preferred):
+        penalty    – int added to the scoring cost function
+        is_preferred – bool, True when the slot matches ALL stated preferences
+    """
+    from .models import Division as Div
+    penalty = 0
+    matched = True
+
+    # ── Shift preference ───────────────────────────────────────────────────
+    if num_day_slots > 0:
+        slot_fraction = slot_idx / num_day_slots   # 0 = first slot, 1 = last
+        if div.preferred_shift == Div.PreferredShift.MORNING:
+            # Penalise late slots (fraction > 0.5)
+            if slot_fraction > 0.5:
+                penalty += int(40 * slot_fraction)
+                matched = False
+        elif div.preferred_shift == Div.PreferredShift.AFTERNOON:
+            # Penalise early slots (fraction < 0.4)
+            if slot_fraction < 0.4:
+                penalty += int(40 * (0.4 - slot_fraction) / 0.4)
+                matched = False
+
+    # ── Light day penalty ──────────────────────────────────────────────────
+    if div.preferred_light_day != "NONE" and day == div.preferred_light_day:
+        penalty += 50
+        matched = False
+
+    return penalty, matched
+
+
 def schedule_timetable(sessions):
     """
-    Priority 2: Lab Sessions Representation & Constraints + Multi-Resource Optimizer.
+    Preference-Guided Priority Scheduler.
 
-    Features:
-      1. Continuous Multi-Slot Labs: Each lab session is allocated to K continuous
-         time slots on the same day without crossing breaks.
-      2. Room Type & Capacity Matching:
-         - Labs are assigned to RoomType.LAB with capacity >= division strength.
-         - Lectures are assigned to RoomType.CLASSROOM with capacity >= division strength.
-      3. Zero Clashes Guaranteed (Fixes Bug 1):
-         - Teacher availability checked globally across all divisions.
-         - Division availability checked.
-         - Room availability checked (one class per room per slot).
-      4. Balanced Weekly Distribution:
-         - Labs spread evenly across days (at most 1 lab per division per day).
-         - Lectures spread across days (avoiding multiple lectures of the same subject on the same day).
-         - Teacher daily workload balanced across the week.
+    Stage 11 additions on top of the Priority 2 multi-resource engine:
+
+    1. PRIORITY ORDERING: Divisions are sorted by effective_priority
+       (year × 100 + performance_percentage, or manually set). Higher-priority
+       divisions schedule ALL their sessions first, so they get first pick
+       of the time-slots that best match their preferences.
+
+    2. PREFERENCE-WEIGHTED COST FUNCTION: A _preference_slot_penalty() is
+       added to the slot-scoring formula for every candidate slot. This means
+       the algorithm naturally gravitates toward preference-matching slots
+       when multiple equally-valid choices exist, without ever violating hard
+       constraints (teacher/room/division clashes).
+
+    3. SATISFACTION METRICS: Returns a second value — a dict mapping
+       division_id -> {"matched": int, "total": int, "pct": float} — so the
+       view can display "Division TE-A: 87% preference match".
+
+    Original Priority 2 features are fully preserved:
+      - Continuous multi-slot labs in LAB rooms.
+      - Room type & capacity matching.
+      - Zero clash guarantee (teacher / division / room occupancy).
+      - Balanced day distribution with day-spread scoring.
     """
     from collections import defaultdict
+    from .models import Division as DivModel
+
     all_slots = list(TimeSlot.objects.order_by("day", "start_time"))
     all_rooms = list(Room.objects.all())
 
@@ -313,24 +364,24 @@ def schedule_timetable(sessions):
     for s in all_slots:
         slots_by_day[s.day].append(s)
 
-    lab_rooms = [r for r in all_rooms if r.room_type == Room.RoomType.LAB]
-    class_rooms = [r for r in all_rooms if r.room_type == Room.RoomType.CLASSROOM]
+    lab_rooms      = [r for r in all_rooms if r.room_type == Room.RoomType.LAB]
+    class_rooms    = [r for r in all_rooms if r.room_type == Room.RoomType.CLASSROOM]
     fallback_rooms = [r for r in all_rooms if r.room_type != Room.RoomType.LAB]
 
-    # Global occupancy tracking: prevents any double-booking
-    teacher_busy = defaultdict(set)   # (day, slot_id) -> set(teacher_ids)
-    division_busy = defaultdict(set)  # (day, slot_id) -> set(division_ids)
-    room_busy = defaultdict(set)      # (day, slot_id) -> set(room_ids)
+    # Global occupancy tracking
+    teacher_busy  = defaultdict(set)
+    division_busy = defaultdict(set)
+    room_busy     = defaultdict(set)
 
     # Distribution tracking
-    div_day_labs = defaultdict(int)            # (division_id, day) -> count
-    div_subj_day_lecs = defaultdict(int)       # (division_id, subject_id, day) -> count
-    div_day_total = defaultdict(int)           # (division_id, day) -> count
-    teacher_day_total = defaultdict(int)       # (teacher_id, day) -> count
-    div_subj_has_lab_today = defaultdict(bool) # (division_id, subject_id, day) -> bool
+    div_day_labs           = defaultdict(int)
+    div_subj_day_lecs      = defaultdict(int)
+    div_day_total          = defaultdict(int)
+    teacher_day_total      = defaultdict(int)
+    div_subj_has_lab_today = defaultdict(bool)
 
     # Group sessions into lab groups and lecture items
-    lab_groups = defaultdict(list)
+    lab_groups    = defaultdict(list)
     lecture_items = []
 
     for idx, s in enumerate(sessions):
@@ -341,20 +392,47 @@ def schedule_timetable(sessions):
 
     assigned = [None] * len(sessions)
 
-    # 1. SCHEDULE LABS (Most Constrained First)
-    for lab_id, group in lab_groups.items():
-        dur = group[0][1]["duration_slots"]
+    # ── Satisfaction tracking ──────────────────────────────────────────────
+    # matched_slots[div_id] = count of sessions placed in a preferred slot
+    # total_slots[div_id]   = total sessions placed for that division
+    matched_slots = defaultdict(int)
+    total_slots   = defaultdict(int)
+
+    # ── Determine scheduling order: highest-priority division first ─────────
+    # Collect all unique division objects from sessions (preserve insertion order).
+    seen_divs = {}
+    for s in sessions:
+        d = s["subject"].division
+        if d.id not in seen_divs:
+            seen_divs[d.id] = d
+
+    div_order = sorted(seen_divs.values(), key=lambda d: d.effective_priority, reverse=True)
+
+    # Re-order lab_groups and lecture_items to respect div_order.
+    def _div_priority_key(s):
+        return -s["subject"].division.effective_priority  # negative = highest first
+
+    lab_groups_ordered = sorted(
+        lab_groups.items(),
+        key=lambda kv: _div_priority_key(kv[1][0][1])
+    )
+    lecture_items_ordered = sorted(lecture_items, key=lambda iv: _div_priority_key(iv[1]))
+
+    # 1. SCHEDULE LABS (Most Constrained First, then by division priority)
+    for lab_id, group in lab_groups_ordered:
+        dur     = group[0][1]["duration_slots"]
         subject = group[0][1]["subject"]
         teacher = group[0][1]["teacher"]
-        div = subject.division
+        div     = subject.division
 
         valid_lab_rooms = [r for r in lab_rooms if r.capacity >= div.strength]
         if not valid_lab_rooms:
             valid_lab_rooms = lab_rooms if lab_rooms else all_rooms
 
         best_candidate = None
-        best_score = float("inf")
+        best_score     = float("inf")
 
+        # Sort days: prefer days that have fewer existing labs for this division.
         days_sorted = sorted(
             [d for d in DAY_ORDER if d in slots_by_day],
             key=lambda d: (div_day_labs[(div.id, d)], div_day_total[(div.id, d)])
@@ -362,7 +440,8 @@ def schedule_timetable(sessions):
 
         for day in days_sorted:
             day_penalty = 100 * div_day_labs[(div.id, day)] if div_day_labs[(div.id, day)] >= 1 else 0
-            day_slots = slots_by_day[day]
+            day_slots   = slots_by_day[day]
+            num_ds      = len(day_slots)
 
             for i in range(len(day_slots) - dur + 1):
                 block = day_slots[i:i + dur]
@@ -370,7 +449,10 @@ def schedule_timetable(sessions):
                 if not is_continuous:
                     continue
 
-                if any(teacher.id in teacher_busy[(day, sl.id)] or div.id in division_busy[(day, sl.id)] for sl in block):
+                if any(
+                    teacher.id in teacher_busy[(day, sl.id)] or div.id in division_busy[(day, sl.id)]
+                    for sl in block
+                ):
                     continue
 
                 free_room = None
@@ -381,41 +463,59 @@ def schedule_timetable(sessions):
                 if not free_room:
                     continue
 
+                # ── Preference penalty for labs ─────────────────────────
+                from .models import Division as DivPref
+                pref_penalty = 0
+                is_pref = True
+                if div.preferred_lab_timing == DivPref.PreferredLabTiming.MORNING and i > num_ds // 2:
+                    pref_penalty += 40
+                    is_pref = False
+                elif div.preferred_lab_timing == DivPref.PreferredLabTiming.AFTERNOON and i <= num_ds // 2:
+                    pref_penalty += 40
+                    is_pref = False
+                if div.preferred_light_day != "NONE" and day == div.preferred_light_day:
+                    pref_penalty += 50
+                    is_pref = False
+
                 score = (
                     day_penalty
                     + 10 * div_day_total[(div.id, day)]
-                    + 5 * teacher_day_total[(teacher.id, day)]
+                    + 5  * teacher_day_total[(teacher.id, day)]
+                    + pref_penalty
                     + i
                 )
 
                 if score < best_score:
-                    best_score = score
-                    best_candidate = (day, block, free_room)
+                    best_score     = score
+                    best_candidate = (day, block, free_room, is_pref)
 
         if best_candidate:
-            day, block, room = best_candidate
+            day, block, room, is_pref = best_candidate
             for (sess_idx, s), slot in zip(group, block):
                 assigned[sess_idx] = (slot, room)
                 teacher_busy[(day, slot.id)].add(teacher.id)
                 division_busy[(day, slot.id)].add(div.id)
                 room_busy[(day, slot.id)].add(room.id)
-                div_day_total[(div.id, day)] += 1
+                div_day_total[(div.id, day)]   += 1
                 teacher_day_total[(teacher.id, day)] += 1
             div_day_labs[(div.id, day)] += 1
             div_subj_has_lab_today[(div.id, subject.id, day)] = True
+            # Track satisfaction (count the block as 1 decision unit)
+            total_slots[div.id]   += 1
+            matched_slots[div.id] += (1 if is_pref else 0)
 
-    # 2. SCHEDULE LECTURES
-    for idx, s in lecture_items:
+    # 2. SCHEDULE LECTURES (in division-priority order)
+    for idx, s in lecture_items_ordered:
         subject = s["subject"]
         teacher = s["teacher"]
-        div = subject.division
+        div     = subject.division
 
         valid_classrooms = [r for r in class_rooms if r.capacity >= div.strength]
         if not valid_classrooms:
             valid_classrooms = fallback_rooms if fallback_rooms else all_rooms
 
         best_candidate = None
-        best_score = float("inf")
+        best_score     = float("inf")
 
         days_sorted = sorted(
             [d for d in DAY_ORDER if d in slots_by_day],
@@ -423,14 +523,15 @@ def schedule_timetable(sessions):
                 div_subj_day_lecs[(div.id, subject.id, d)],
                 1 if div_subj_has_lab_today[(div.id, subject.id, d)] else 0,
                 div_day_total[(div.id, d)],
-                teacher_day_total[(teacher.id, d)],  # Bug 1 fix: was `day` (outer var), must be `d`
+                teacher_day_total[(teacher.id, d)],
             )
         )
 
         for day in days_sorted:
-            day_slots = slots_by_day[day]
-            subj_lecs_today = div_subj_day_lecs[(div.id, subject.id, day)]
-            has_lab_today = div_subj_has_lab_today[(div.id, subject.id, day)]
+            day_slots          = slots_by_day[day]
+            num_ds             = len(day_slots)
+            subj_lecs_today    = div_subj_day_lecs[(div.id, subject.id, day)]
+            has_lab_today      = div_subj_has_lab_today[(div.id, subject.id, day)]
 
             for slot_idx, slot in enumerate(day_slots):
                 if teacher.id in teacher_busy[(day, slot.id)] or div.id in division_busy[(day, slot.id)]:
@@ -444,29 +545,51 @@ def schedule_timetable(sessions):
                 if not free_room:
                     continue
 
+                pref_penalty, is_pref = _preference_slot_penalty(slot, day, slot_idx, num_ds, div)
+
                 score = (
                     subj_lecs_today * 60
                     + (25 if has_lab_today else 0)
                     + div_day_total[(div.id, day)] * 5
                     + teacher_day_total[(teacher.id, day)] * 3
+                    + pref_penalty
                     + slot_idx
                 )
 
                 if score < best_score:
-                    best_score = score
-                    best_candidate = (day, slot, free_room)
+                    best_score     = score
+                    best_candidate = (day, slot, free_room, is_pref)
 
         if best_candidate:
-            day, slot, room = best_candidate
+            day, slot, room, is_pref = best_candidate
             assigned[idx] = (slot, room)
             teacher_busy[(day, slot.id)].add(teacher.id)
             division_busy[(day, slot.id)].add(div.id)
             room_busy[(day, slot.id)].add(room.id)
-            div_day_total[(div.id, day)] += 1
+            div_day_total[(div.id, day)]   += 1
             teacher_day_total[(teacher.id, day)] += 1
             div_subj_day_lecs[(div.id, subject.id, day)] += 1
+            total_slots[div.id]   += 1
+            matched_slots[div.id] += (1 if is_pref else 0)
 
-    return assigned
+    # ── Build satisfaction report ──────────────────────────────────────────
+    satisfaction = {}
+    for div_id, div in seen_divs.items():
+        total = total_slots[div_id]
+        matched = matched_slots[div_id]
+        pct = round((matched / total * 100) if total > 0 else 100.0, 1)
+        satisfaction[div_id] = {
+            "division": div,
+            "matched": matched,
+            "total": total,
+            "pct": pct,
+            "priority": div.effective_priority,
+            "preferred_shift": div.get_preferred_shift_display(),
+            "preferred_lab_timing": div.get_preferred_lab_timing_display(),
+            "preferred_light_day": div.get_preferred_light_day_display(),
+        }
+
+    return assigned, satisfaction
 
 
 def build_timetable_rows(sessions, colors):
@@ -476,12 +599,16 @@ def build_timetable_rows(sessions, colors):
     parameter from the C++ engine is no longer used for placement — it is
     kept in the signature for backward compatibility with the compare/diagnose
     views that call run_graph_coloring() separately.
+
+    Returns: (rows, slot_shortage, satisfaction)
+        rows          – list of row dicts for the template
+        slot_shortage – True if any session could not be placed
+        satisfaction  – dict {div_id: {pct, matched, total, ...}} from the scheduler
     """
-    assigned_slots_and_rooms = schedule_timetable(sessions)
+    assigned_slots_and_rooms, satisfaction = schedule_timetable(sessions)
 
     # Bug 4 fix: num_colors_used must reflect the Python scheduler output,
-    # not the stale C++ coloring. Count distinct (day, slot) pairs actually
-    # assigned — that's the real number of distinct time slots consumed.
+    # not the stale C++ coloring. Count distinct slot IDs actually assigned.
     assigned_slot_ids = set(
         item[0].id for item in assigned_slots_and_rooms if item is not None
     )
@@ -504,7 +631,7 @@ def build_timetable_rows(sessions, colors):
             "lab_id": session.get("lab_id"),
         })
 
-    return rows, slot_shortage
+    return rows, slot_shortage, satisfaction
 
 
 def verify_timetable_conflicts(rows):

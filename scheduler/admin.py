@@ -5,7 +5,28 @@ from .models import Division, Room, Subject, Teacher, TimeSlot
 
 @admin.register(Division)
 class DivisionAdmin(admin.ModelAdmin):
-    list_display = ("name", "year", "strength", "performance_percentage")
+    list_display = (
+        "name", "year", "strength", "performance_percentage",
+        "scheduling_priority", "preferred_shift", "preferred_lab_timing", "preferred_light_day",
+    )
+    fieldsets = (
+        ("Basic Info", {
+            "fields": ("name", "year", "strength", "performance_percentage"),
+        }),
+        ("Schedule Preferences (Student / Class-Rep Input)", {
+            "description": (
+                "Set the preferred schedule style for this division. "
+                "Higher-priority divisions get first pick of slots matching their preferences. "
+                "Leave 'Scheduling Priority' at 0 to auto-derive from Year + Performance %."
+            ),
+            "fields": (
+                "scheduling_priority",
+                "preferred_shift",
+                "preferred_lab_timing",
+                "preferred_light_day",
+            ),
+        }),
+    )
 
 
 @admin.register(Room)

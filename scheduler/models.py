@@ -5,17 +5,79 @@ class Division(models.Model):
     """
     A class/batch of students, e.g. "TE-A" (Third Year, Division A).
 
-    `performance_percentage` is used later (Stage: Performance-Based
-    Division Priority) as a soft preference input to the optimizer.
-    It is NOT used yet — storing it here now avoids a migration later.
+    Preference-Guided Priority Scheduler (Stage 11):
+    Divisions register their schedule preferences (shift, lab timing, light
+    day). Higher-priority divisions get first pick of slots that match
+    their preferences. The scheduler uses these as soft constraints inside
+    a weighted cost function — hard resource constraints (teacher/room
+    clashes) always win.
     """
+
+    class PreferredShift(models.TextChoices):
+        MORNING  = "MORNING",  "Morning Focus (09:00–12:00)"
+        BALANCED = "BALANCED", "Balanced / Standard"
+        AFTERNOON = "AFTERNOON", "Afternoon / Late Start (11:00+)"
+
+    class PreferredLabTiming(models.TextChoices):
+        MORNING   = "MORNING",   "Morning Labs"
+        AFTERNOON = "AFTERNOON", "Post-Lunch Labs"
+        NO_PREF   = "NO_PREF",   "No Preference"
+
+    class LightDay(models.TextChoices):
+        MONDAY    = "MON", "Monday"
+        TUESDAY   = "TUE", "Tuesday"
+        WEDNESDAY = "WED", "Wednesday"
+        THURSDAY  = "THU", "Thursday"
+        FRIDAY    = "FRI", "Friday"
+        SATURDAY  = "SAT", "Saturday"
+        NONE      = "NONE", "No Light Day"
+
     name = models.CharField(max_length=50, unique=True)
     year = models.PositiveSmallIntegerField(help_text="e.g. 1, 2, 3, 4")
     strength = models.PositiveIntegerField(help_text="Number of students")
     performance_percentage = models.FloatField(
         default=0.0,
-        help_text="Previous semester average %, used as a soft scheduling preference later.",
+        help_text="Previous semester average %. Higher % → higher scheduling priority.",
     )
+
+    # ── Preference fields (student / class-rep input) ──────────────────────
+    scheduling_priority = models.PositiveIntegerField(
+        default=0,
+        help_text=(
+            "Scheduling priority (higher wins first pick of preferred slots). "
+            "Automatically derived from year + performance, but can be overridden."
+        ),
+    )
+    preferred_shift = models.CharField(
+        max_length=10,
+        choices=PreferredShift.choices,
+        default=PreferredShift.BALANCED,
+        help_text="Does this division prefer morning, afternoon, or balanced sessions?",
+    )
+    preferred_lab_timing = models.CharField(
+        max_length=10,
+        choices=PreferredLabTiming.choices,
+        default=PreferredLabTiming.NO_PREF,
+        help_text="Does this division prefer morning or afternoon lab sessions?",
+    )
+    preferred_light_day = models.CharField(
+        max_length=4,
+        choices=LightDay.choices,
+        default=LightDay.NONE,
+        help_text="Which day should have fewer/lighter sessions? (e.g. Friday)",
+    )
+
+    @property
+    def effective_priority(self):
+        """
+        If scheduling_priority has been manually set (> 0), use it directly.
+        Otherwise auto-derive from year (higher year = higher priority) and
+        performance_percentage (better performance = higher priority):
+            priority = year * 100 + round(performance_percentage)
+        """
+        if self.scheduling_priority > 0:
+            return self.scheduling_priority
+        return self.year * 100 + round(self.performance_percentage)
 
     def __str__(self):
         return self.name

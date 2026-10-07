@@ -1,0 +1,114 @@
+{% extends "scheduler/base.html" %}
+{% block title %}Subjects — University Scheduler{% endblock %}
+{% block page_title %}Subjects{% endblock %}
+{% block page_sub %}Manage subjects assigned to divisions{% endblock %}
+{% block nav_subjects %}active{% endblock %}
+
+{% block topbar_actions %}
+{% if request.session.site_admin %}
+<button class="btn btn-primary btn-sm" onclick="togglePanel()">
+    <i class="bi bi-plus-lg"></i> Add Subject
+</button>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+{% if request.session.site_admin %}
+<div id="addPanel" style="display:none;margin-bottom:24px;">
+<div class="card">
+    <div class="card-header">
+        <i class="bi bi-book" style="color:var(--accent);"></i>
+        <h3>New Subject</h3>
+        <button onclick="togglePanel()" style="margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:1.1rem;"><i class="bi bi-x-lg"></i></button>
+    </div>
+    <div class="card-body">
+        <form method="post">
+            {% csrf_token %}
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;">
+                {% for field in form %}
+                <div class="form-group {% if field.field.widget.allow_multiple_selected %}" style="grid-column:1/-1;"{% else %}"{% endif %}>
+                    <label class="form-label">{{ field.label }}</label>
+                    {{ field }}
+                    {% if field.errors %}<div class="form-error">{{ field.errors|join:", " }}</div>{% endif %}
+                    {% if field.help_text %}<div style="font-size:.72rem;color:var(--muted);margin-top:4px;">{{ field.help_text }}</div>{% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            <div style="margin-top:16px;display:flex;gap:10px;">
+                <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Save Subject</button>
+                <button type="button" class="btn btn-secondary" onclick="togglePanel()">Cancel</button>
+            </div>
+        </form>
+    </div>
+</div>
+</div>
+{% endif %}
+
+<div class="card">
+    <div class="card-header">
+        <i class="bi bi-book" style="color:var(--accent);"></i>
+        <h3>All Subjects <span style="font-weight:400;color:var(--muted);">({{ objects.count }})</span></h3>
+    </div>
+    {% if objects %}
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Code</th><th>Name</th><th>Division</th>
+                <th>Hrs/Wk</th><th>Lab</th><th>Qualified Teachers</th>
+                {% if request.session.site_admin %}<th>Actions</th>{% endif %}
+            </tr>
+        </thead>
+        <tbody>
+        {% for obj in objects %}
+            <tr>
+                <td><span class="badge badge-purple">{{ obj.code }}</span></td>
+                <td><strong>{{ obj.name }}</strong></td>
+                <td>{{ obj.division }}</td>
+                <td>{{ obj.hours_per_week }}h</td>
+                <td>
+                    {% if obj.requires_lab %}
+                    <span class="badge badge-yellow"><i class="bi bi-flask"></i> {{ obj.lab_sessions_per_week }}×{{ obj.lab_duration_slots }}h</span>
+                    {% else %}
+                    <span style="color:var(--muted);font-size:.8rem;">—</span>
+                    {% endif %}
+                </td>
+                <td>
+                    <div style="display:flex;flex-wrap:wrap;gap:4px;">
+                    {% for t in obj.qualified_teachers.all %}
+                        <span class="badge badge-blue">{{ t.name }}</span>
+                    {% empty %}
+                        <span style="color:var(--danger);font-size:.8rem;"><i class="bi bi-exclamation-triangle"></i> None assigned</span>
+                    {% endfor %}
+                    </div>
+                </td>
+                {% if request.session.site_admin %}
+                <td>
+                    <div style="display:flex;gap:6px;">
+                        <a href="{% url 'data_subject_edit' obj.pk %}" class="btn btn-secondary btn-sm btn-icon"><i class="bi bi-pencil"></i></a>
+                        <form method="post" action="{% url 'data_subject_delete' obj.pk %}" onsubmit="return confirm('Delete {{ obj.code }}?');">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-danger btn-sm btn-icon"><i class="bi bi-trash"></i></button>
+                        </form>
+                    </div>
+                </td>
+                {% endif %}
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state">
+        <i class="bi bi-book"></i>
+        <p>No subjects yet.{% if request.session.site_admin %} Add one above.{% else %} Log in as admin to add subjects.{% endif %}</p>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+function togglePanel() {
+    const p = document.getElementById('addPanel');
+    p.style.display = p.style.display === 'none' ? 'block' : 'none';
+}
+{% if form.errors %}togglePanel();{% endif %}
+</script>
+{% endblock %}

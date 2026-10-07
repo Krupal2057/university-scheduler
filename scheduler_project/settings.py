@@ -117,6 +117,12 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 
+# ── Site Admin Password (for the custom data-management UI) ───────────────────
+# This is NOT Django's superuser password. It's a simple shared password that
+# unlocks the Create / Edit / Delete controls in the main scheduling UI.
+# Change this to whatever you like — no hashing needed for a local dev project.
+SITE_ADMIN_PASSWORD = "admin123"
+
 
 # Email
 # https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
